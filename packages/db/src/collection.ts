@@ -985,6 +985,12 @@ export class CollectionImpl<
     for (const listener of this.changeListeners) {
       listener([])
     }
+    // Emit to key-specific listeners
+    for (const [_key, keyListeners] of this.changeKeyListeners) {
+      for (const listener of keyListeners) {
+        listener([])
+      }
+    }
   }
 
   /**
