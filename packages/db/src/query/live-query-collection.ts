@@ -625,6 +625,13 @@ export function liveQueryCollectionOptions<
       // Return the unsubscribe function
       return () => {
         unsubscribeCallbacks.forEach((unsubscribe) => unsubscribe())
+
+        // Reset caches so a fresh graph/pipeline is compiled on next start
+        // This avoids reusing a finalized D2 graph across GC restarts
+        graphCache = undefined
+        inputsCache = undefined
+        pipelineCache = undefined
+        collectionWhereClausesCache = undefined
       }
     },
   }
