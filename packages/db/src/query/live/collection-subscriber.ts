@@ -113,6 +113,7 @@ export class CollectionSubscriber<
           // filter out deletes for keys that have not been sent
           continue
         }
+        this.sentKeys.add(change.key)
       }
       newChanges.push(newChange)
     }
@@ -153,12 +154,29 @@ export class CollectionSubscriber<
   private subscribeToMatchingChanges(
     whereExpression: BasicExpression<boolean> | undefined
   ) {
+    // Flag to indicate we have send to whole initial state of the collection
+    // to the pipeline, this is set when there are no indexes that can be used
+    // to filter the changes and so the whole state was requested from the collection
     let loadedInitialState = false
+
+    // Flag to indicate that we have started sending changes to the pipeline.
+    // This is set to true by either the first call to `loadKeys` or when the
+    // query requests the whole initial state in `loadInitialState`.
+    // Until that point we filter out all changes from subscription to the collection.
+    let sendChanges = false
 
     const sendVisibleChanges = (
       changes: Array<ChangeMessage<any, string | number>>
     ) => {
-      this.sendVisibleChangesToPipeline(changes, loadedInitialState)
+      // We filter out changes when sendChanges is false to ensure that we don't send
+      // any changes from the live subscription until the join operator requests either
+      // the initial state or its first key. This is needed otherwise it could receive
+      // changes which are then later subsumed by the initial state (and that would
+      // lead to weird bugs due to the data being received twice).
+      this.sendVisibleChangesToPipeline(
+        sendChanges ? changes : [],
+        loadedInitialState
+      )
     }
 
     const unsubscribe = this.collection.subscribeChanges(sendVisibleChanges, {
@@ -171,6 +189,7 @@ export class CollectionSubscriber<
       ? createFilterFunctionFromExpression(whereExpression)
       : () => true
     const loadKs = (keys: Set<string | number>) => {
+      sendChanges = true
       return this.loadKeys(keys, filterFn)
     }
 
@@ -183,6 +202,7 @@ export class CollectionSubscriber<
         // Make sure we only load the initial state once
         if (loadedInitialState) return
         loadedInitialState = true
+        sendChanges = true
 
         const changes = this.collection.currentStateAsChanges({
           whereExpression,
