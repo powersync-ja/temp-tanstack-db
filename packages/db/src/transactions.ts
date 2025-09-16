@@ -203,7 +203,10 @@ class Transaction<T extends object = Record<string, unknown>> {
     }
 
     if (this.autoCommit) {
-      this.commit()
+      this.commit().catch(() => {
+        // Errors from autoCommit are handled via isPersisted.promise
+        // This catch prevents unhandled promise rejections
+      })
     }
 
     return this
@@ -374,14 +377,21 @@ class Transaction<T extends object = Record<string, unknown>> {
 
       this.isPersisted.resolve(this)
     } catch (error) {
+      // Preserve the original error for rethrowing
+      const originalError =
+        error instanceof Error ? error : new Error(String(error))
+
       // Update transaction with error information
       this.error = {
-        message: error instanceof Error ? error.message : String(error),
-        error: error instanceof Error ? error : new Error(String(error)),
+        message: originalError.message,
+        error: originalError,
       }
 
       // rollback the transaction
-      return this.rollback()
+      this.rollback()
+
+      // Re-throw the original error to preserve identity and stack
+      throw originalError
     }
 
     return this
