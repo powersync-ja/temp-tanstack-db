@@ -257,14 +257,13 @@ describe(`QueryCollection`, () => {
     await vi.waitFor(() => {
       const errorCallArgs = consoleErrorSpy.mock.calls.find((call) =>
         call[0].includes(
-          `[QueryCollection] queryFn did not return an array of objects`
+          `@tanstack/query-db-collection: queryFn must return an array of objects`
         )
       )
       expect(errorCallArgs).toBeDefined()
     })
 
     // The collection state should remain empty or unchanged
-    // Since we're not setting any initial data, we expect the state to be empty
     expect(collection.size).toBe(0)
 
     // Clean up the spy
@@ -435,6 +434,128 @@ describe(`QueryCollection`, () => {
     expect(queryFn).toHaveBeenCalledWith(expect.objectContaining({ meta }))
   })
 
+  describe(`Select method testing`, () => {
+    type MetaDataType<T> = {
+      metaDataOne: string
+      metaDataTwo: string
+      data: Array<T>
+    }
+
+    const initialMetaData: MetaDataType<TestItem> = {
+      metaDataOne: `example metadata`,
+      metaDataTwo: `example metadata`,
+      data: [
+        {
+          id: `1`,
+          name: `First Item`,
+        },
+        {
+          id: `2`,
+          name: `Second Item`,
+        },
+      ],
+    }
+
+    it(`Select extracts array from metadata`, async () => {
+      const queryKey = [`select-test`]
+
+      const queryFn = vi.fn().mockResolvedValue(initialMetaData)
+      const select = vi.fn().mockReturnValue(initialMetaData.data)
+
+      const options = queryCollectionOptions({
+        id: `test`,
+        queryClient,
+        queryKey,
+        queryFn,
+        select,
+        getKey,
+        startSync: true,
+      })
+      const collection = createCollection(options)
+
+      await vi.waitFor(() => {
+        expect(queryFn).toHaveBeenCalledTimes(1)
+        expect(select).toHaveBeenCalledTimes(1)
+        expect(collection.size).toBeGreaterThan(0)
+      })
+
+      expect(collection.size).toBe(initialMetaData.data.length)
+      expect(collection.get(`1`)).toEqual(initialMetaData.data[0])
+      expect(collection.get(`2`)).toEqual(initialMetaData.data[1])
+    })
+
+    it(`Throws error if select returns non array`, async () => {
+      const queryKey = [`select-test`]
+      const consoleErrorSpy = vi
+        .spyOn(console, `error`)
+        .mockImplementation(() => {})
+
+      const queryFn = vi.fn().mockResolvedValue(initialMetaData)
+      // Returns non-array
+      const select = vi.fn().mockReturnValue(initialMetaData)
+
+      const options = queryCollectionOptions({
+        id: `test`,
+        queryClient,
+        queryKey,
+        queryFn,
+        select,
+        getKey,
+        startSync: true,
+      })
+      const collection = createCollection(options)
+
+      await vi.waitFor(() => {
+        expect(queryFn).toHaveBeenCalledTimes(1)
+        expect(select).toHaveBeenCalledTimes(1)
+      })
+
+      // Verify the validation error was logged
+      await vi.waitFor(() => {
+        const errorCallArgs = consoleErrorSpy.mock.calls.find((call) =>
+          call[0].includes(
+            `@tanstack/query-db-collection: select() must return an array of objects`
+          )
+        )
+        expect(errorCallArgs).toBeDefined()
+      })
+
+      expect(collection.size).toBe(0)
+
+      // Clean up the spy
+      consoleErrorSpy.mockRestore()
+    })
+
+    it(`Whole response is cached in QueryClient when used with select option`, async () => {
+      const queryKey = [`select-test`]
+
+      const queryFn = vi.fn().mockResolvedValue(initialMetaData)
+      const select = vi.fn().mockReturnValue(initialMetaData.data)
+
+      const options = queryCollectionOptions({
+        id: `test`,
+        queryClient,
+        queryKey,
+        queryFn,
+        select,
+        getKey,
+        startSync: true,
+      })
+      const collection = createCollection(options)
+
+      await vi.waitFor(() => {
+        expect(queryFn).toHaveBeenCalledTimes(1)
+        expect(select).toHaveBeenCalledTimes(1)
+        expect(collection.size).toBe(2)
+      })
+
+      // Verify that the query cache state exists along with its metadata
+      const initialCache = queryClient.getQueryData(
+        queryKey
+      ) as MetaDataType<TestItem>
+      expect(initialCache).toEqual(initialMetaData)
+    })
+  })
   describe(`Direct persistence handlers`, () => {
     it(`should pass through direct persistence handlers to collection options`, () => {
       const queryKey = [`directPersistenceTest`]
@@ -1423,7 +1544,6 @@ describe(`QueryCollection`, () => {
       const updatedItem = cacheAfterUpdate.find((item) => item.id === `1`)
       expect(updatedItem?.name).toBe(`Updated Item 1`)
       expect(updatedItem?.value).toBe(10) // Original value preserved
-
       // Test writeDelete updates cache
       collection.utils.writeDelete(`2`)
 
