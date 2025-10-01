@@ -16,7 +16,7 @@ export function asPowerSyncRecord(record: any): PowerSyncRecord {
 }
 
 /**
- * Maps Tanstack DB operations to {@link DiffTriggerOperation}
+ * Maps {@link DiffTriggerOperation} to TanstackDB operations
  */
 export function mapOperation(operation: DiffTriggerOperation) {
   switch (operation) {
@@ -26,5 +26,21 @@ export function mapOperation(operation: DiffTriggerOperation) {
       return `update`
     case DiffTriggerOperation.DELETE:
       return `delete`
+  }
+}
+
+/**
+ * Maps TanstackDB operations to  {@link DiffTriggerOperation}
+ */
+export function mapOperationToPowerSync(operation: string) {
+  switch (operation) {
+    case `insert`:
+      return DiffTriggerOperation.INSERT
+    case `update`:
+      return DiffTriggerOperation.UPDATE
+    case `delete`:
+      return DiffTriggerOperation.DELETE
+    default:
+      throw new Error(`Unknown operation ${operation} received`)
   }
 }

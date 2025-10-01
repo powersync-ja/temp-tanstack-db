@@ -3,6 +3,7 @@ import type { DiffTriggerOperation } from "@powersync/common"
 import type { DeferredPromise } from "p-defer"
 
 export type PendingOperation = {
+  tableName: string
   operation: DiffTriggerOperation
   id: string
   timestamp: string
@@ -17,6 +18,11 @@ export type PendingOperation = {
  */
 export class PendingOperationStore {
   private pendingOperations = new Map<PendingOperation, DeferredPromise<void>>()
+
+  /**
+   * Globally accessible PendingOperationStore
+   */
+  static GLOBAL = new PendingOperationStore()
 
   /**
    * @returns A promise which will resolve once the specified operation has been seen.
@@ -34,6 +40,7 @@ export class PendingOperationStore {
     for (const operation of operations) {
       for (const [pendingOp, deferred] of this.pendingOperations.entries()) {
         if (
+          pendingOp.tableName == operation.tableName &&
           pendingOp.operation == operation.operation &&
           pendingOp.id == operation.id &&
           pendingOp.timestamp == operation.timestamp

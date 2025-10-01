@@ -1,105 +1,20 @@
 import { DiffTriggerOperation } from "@powersync/common"
+import { asPowerSyncRecord, mapOperation } from "./helpers"
 import { PendingOperationStore } from "./PendingOperationStore"
 import { PowerSyncTransactor } from "./PowerSyncTransactor"
-import { mapOperation } from "./helpers"
+import type {
+  EnhancedPowerSyncCollectionConfig,
+  PowerSyncCollectionConfig,
+  PowerSyncCollectionUtils,
+} from "./definitions"
 import type { PendingOperation } from "./PendingOperationStore"
 import type {
-  BaseCollectionConfig,
   CollectionConfig,
   InferSchemaOutput,
   SyncConfig,
-  Transaction,
 } from "@tanstack/db"
-import type {
-  AbstractPowerSyncDatabase,
-  TriggerDiffRecord,
-} from "@powersync/common"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
-
-/**
- * Configuration interface for PowerSync collection options
- * @template T - The type of items in the collection
- * @template TSchema - The schema type for validation
- */
-/**
- * Configuration options for creating a PowerSync collection.
- *
- * @example
- * ```typescript
- * const APP_SCHEMA = new Schema({
- *   documents: new Table({
- *     name: column.text,
- *   }),
- * })
- *
- * type Document = (typeof APP_SCHEMA)["types"]["documents"]
- *
- * const db = new PowerSyncDatabase({
- *   database: {
- *     dbFilename: "test.sqlite",
- *   },
- *   schema: APP_SCHEMA,
- * })
- *
- * const collection = createCollection(
- *   powerSyncCollectionOptions<Document>({
- *     database: db,
- *     tableName: "documents",
- *   })
- * )
- * ```
- */
-export type PowerSyncCollectionConfig<
-  T extends object = Record<string, unknown>,
-  TSchema extends StandardSchemaV1 = never,
-> = Omit<
-  BaseCollectionConfig<T, string, TSchema>,
-  `onInsert` | `onUpdate` | `onDelete` | `getKey`
-> & {
-  /** The name of the table in PowerSync database */
-  tableName: string
-  /** The PowerSync database instance */
-  database: AbstractPowerSyncDatabase
-}
-
-export type PowerSyncCollectionUtils = {
-  /**
-   * Applies mutations to the PowerSync database. This method is called automatically by the collection's
-   * insert, update, and delete operations. You typically don't need to call this directly unless you
-   * have special transaction requirements.
-   *
-   * @example
-   * ```typescript
-   * // Create a collection
-   * const collection = createCollection(
-   *   powerSyncCollectionOptions<Document>({
-   *     database: db,
-   *     tableName: "documents",
-   *   })
-   * )
-   *
-   * const addTx = createTransaction({
-   *     autoCommit: false,
-   *     mutationFn: async ({ transaction }) => {
-   *         await collection.utils.mutateTransaction(transaction)
-   *     },
-   * })
-   *
-   * addTx.mutate(() => {
-   *     for (let i = 0; i < 5; i++) {
-   *        collection.insert({ id: randomUUID(), name: `tx-${i}` })
-   *     }
-   * })
-   *
-   * await addTx.commit()
-   * await addTx.isPersisted.promise
-   * ```
-   *
-   * @param transaction - The transaction containing mutations to apply
-   * @returns A promise that resolves when the mutations have been persisted to PowerSync
-   */
-  mutateTransaction: (transaction: Transaction) => Promise<void>
-}
+import type { TriggerDiffRecord } from "@powersync/common"
 
 /**
  * Creates PowerSync collection options for use with a standard Collection
@@ -184,14 +99,7 @@ export function powerSyncCollectionOptions<
   TSchema extends StandardSchemaV1 = never,
 >(
   config: PowerSyncCollectionConfig<T, TSchema>
-): CollectionConfig<T, string, TSchema> & {
-  id?: string
-  utils: PowerSyncCollectionUtils
-  schema?: TSchema
-} {
-  type Row = Record<string, unknown>
-  type Key = string // we always use uuids for keys
-
+): EnhancedPowerSyncCollectionConfig<T, TSchema> {
   const { database, tableName, ...restConfig } = config
 
   /**
@@ -204,14 +112,11 @@ export function powerSyncCollectionOptions<
    * complete to the caller, the in-memory state is already
    * consistent with the database.
    */
-  const pendingOperationStore = new PendingOperationStore()
+  const pendingOperationStore = PendingOperationStore.GLOBAL
   const trackedTableName = `__${tableName}_tracking`
 
   const transactor = new PowerSyncTransactor<T>({
     database,
-    pendingOperationStore,
-    tableName,
-    trackedTableName,
   })
 
   /**
@@ -220,9 +125,8 @@ export function powerSyncCollectionOptions<
    * and the in-memory tanstack-db collection.
    * It is not about sync between a client and a server!
    */
-  type SyncParams = Parameters<SyncConfig<Row, string>[`sync`]>[0]
-  const sync: SyncConfig<Row, Key> = {
-    sync: async (params: SyncParams) => {
+  const sync: SyncConfig<T, string> = {
+    sync: async (params) => {
       const { begin, write, commit, markReady } = params
 
       // Manually create a tracking operation for optimization purposes
@@ -257,6 +161,7 @@ export function powerSyncCollectionOptions<
                   id,
                   operation,
                   timestamp,
+                  tableName,
                 })
               }
 
@@ -286,7 +191,7 @@ export function powerSyncCollectionOptions<
         hooks: {
           beforeCreate: async (context) => {
             begin()
-            for (const row of await context.getAll<Record<string, unknown>>(
+            for (const row of await context.getAll<T>(
               `SELECT * FROM ${tableName}`
             )) {
               write({
@@ -309,9 +214,9 @@ export function powerSyncCollectionOptions<
     getSyncMetadata: undefined,
   }
 
-  const getKey = (record: Record<string, unknown>) => record.id as string
+  const getKey = (record: T) => asPowerSyncRecord(record).id
 
-  return {
+  const outputConfig: EnhancedPowerSyncCollectionConfig<T, TSchema> = {
     ...restConfig,
     getKey,
     sync,
@@ -328,13 +233,11 @@ export function powerSyncCollectionOptions<
       return await transactor.applyTransaction(params.transaction)
     },
     utils: {
-      mutateTransaction: async (transaction: Transaction<T>) => {
-        return await transactor.applyTransaction(transaction)
-      },
+      getMeta: () => ({
+        tableName,
+        trackedTableName,
+      }),
     },
-  } as CollectionConfig<T, string, TSchema> & {
-    id?: string
-    utils: PowerSyncCollectionUtils
-    schema?: TSchema
   }
+  return outputConfig
 }

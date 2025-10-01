@@ -9,15 +9,20 @@ import {
 import { createCollection, createTransaction } from "@tanstack/db"
 import { describe, expect, it, onTestFinished, vi } from "vitest"
 import { powerSyncCollectionOptions } from "../src"
+import { PowerSyncTransactor } from "../src/PowerSyncTransactor"
 import type { AbstractPowerSyncDatabase } from "@powersync/node"
 
 const APP_SCHEMA = new Schema({
+  users: new Table({
+    name: column.text,
+  }),
   documents: new Table({
     name: column.text,
   }),
 })
 
 type Document = (typeof APP_SCHEMA)[`types`][`documents`]
+type User = (typeof APP_SCHEMA)[`types`][`users`]
 
 describe(`PowerSync Integration`, () => {
   async function createDatabase() {
@@ -221,7 +226,9 @@ describe(`PowerSync Integration`, () => {
     const addTx = createTransaction({
       autoCommit: false,
       mutationFn: async ({ transaction }) => {
-        await collection.utils.mutateTransaction(transaction)
+        await new PowerSyncTransactor({ database: db }).applyTransaction(
+          transaction
+        )
       },
     })
 
@@ -251,6 +258,71 @@ describe(`PowerSync Integration`, () => {
       crudEntries
         .reverse()
         .slice(0, 5)
+        .every((crudEntry) => crudEntry.transactionId == lastTransactionId)
+    ).true
+  })
+
+  it(`should handle transactions with multiple collections`, async () => {
+    const db = await createDatabase()
+    await createTestData(db)
+
+    const documentsCollection = createCollection(
+      powerSyncCollectionOptions<Document>({
+        database: db,
+        tableName: `documents`,
+      })
+    )
+
+    const usersCollection = createCollection(
+      powerSyncCollectionOptions<User>({
+        database: db,
+        tableName: `users`,
+      })
+    )
+
+    await documentsCollection.stateWhenReady()
+    await usersCollection.stateWhenReady()
+
+    expect(documentsCollection.size).toBe(3)
+    expect(usersCollection.size).toBe(0)
+
+    const addTx = createTransaction({
+      autoCommit: false,
+      mutationFn: async ({ transaction }) => {
+        await new PowerSyncTransactor({ database: db }).applyTransaction(
+          transaction
+        )
+      },
+    })
+
+    addTx.mutate(() => {
+      for (let i = 0; i < 5; i++) {
+        documentsCollection.insert({ id: randomUUID(), name: `tx-${i}` })
+        usersCollection.insert({ id: randomUUID(), name: `user` })
+      }
+    })
+
+    await addTx.commit()
+    await addTx.isPersisted.promise
+
+    expect(documentsCollection.size).toBe(8)
+    expect(usersCollection.size).toBe(5)
+
+    // fetch the ps_crud items
+    // There should be a crud entries for this
+    const _crudEntries = await db.getAll(`
+        SELECT * FROM ps_crud ORDER BY id`)
+    const crudEntries = _crudEntries.map((r) => CrudEntry.fromRow(r as any))
+
+    const lastTransactionId = crudEntries[crudEntries.length - 1]?.transactionId
+    /**
+     * The last items, created in the same transaction, should be in the same
+     * PowerSync transaction.
+     */
+    expect(
+      crudEntries
+        .reverse()
+        .slice(0, 10)
         .every((crudEntry) => crudEntry.transactionId == lastTransactionId)
     ).true
   })
