@@ -1,0 +1,257 @@
+import { randomUUID } from "node:crypto"
+import {
+  CrudEntry,
+  PowerSyncDatabase,
+  Schema,
+  Table,
+  column,
+} from "@powersync/node"
+import { createCollection, createTransaction } from "@tanstack/db"
+import { describe, expect, it, onTestFinished, vi } from "vitest"
+import { powerSyncCollectionOptions } from "../src"
+import type { AbstractPowerSyncDatabase } from "@powersync/node"
+
+const APP_SCHEMA = new Schema({
+  documents: new Table({
+    name: column.text,
+  }),
+})
+
+type Document = (typeof APP_SCHEMA)[`types`][`documents`]
+
+describe(`PowerSync Integration`, () => {
+  async function createDatabase() {
+    const db = new PowerSyncDatabase({
+      database: {
+        dbFilename: `test.sqlite`,
+      },
+      schema: APP_SCHEMA,
+    })
+    onTestFinished(async () => {
+      await db.disconnectAndClear()
+      await db.close()
+    })
+    await db.disconnectAndClear()
+    return db
+  }
+
+  async function createTestData(db: AbstractPowerSyncDatabase) {
+    await db.execute(`
+        INSERT into documents (id, name)
+        VALUES 
+            (uuid(), 'one'),
+            (uuid(), 'two'),
+            (uuid(), 'three')
+        `)
+  }
+
+  describe(`sync`, () => {
+    it(`should initialize and fetch initial data`, async () => {
+      const db = await createDatabase()
+      await createTestData(db)
+
+      const collection = createCollection(
+        powerSyncCollectionOptions<Document>({
+          database: db,
+          tableName: `documents`,
+        })
+      )
+
+      await collection.stateWhenReady()
+
+      // Verify the collection state contains our items
+      expect(collection.size).toBe(3)
+      expect(collection.toArray.map((entry) => entry.name)).deep.equals([
+        `one`,
+        `two`,
+        `three`,
+      ])
+    })
+  })
+
+  it(`should update when data syncs`, async () => {
+    const db = await createDatabase()
+    await createTestData(db)
+
+    const collection = createCollection(
+      powerSyncCollectionOptions<Document>({
+        database: db,
+        tableName: `documents`,
+      })
+    )
+
+    await collection.stateWhenReady()
+
+    // Verify the collection state contains our items
+    expect(collection.size).toBe(3)
+
+    // Make an update, simulates a sync from another client
+    await db.execute(`
+        INSERT into documents (id, name)
+        VALUES 
+            (uuid(), 'four')
+        `)
+
+    // The collection should update
+    await vi.waitFor(
+      () => {
+        expect(collection.size).toBe(4)
+        expect(collection.toArray.map((entry) => entry.name)).deep.equals([
+          `one`,
+          `two`,
+          `three`,
+          `four`,
+        ])
+      },
+      { timeout: 1000 }
+    )
+
+    await db.execute(`
+        DELETE from documents
+        WHERE name = 'two'
+        `)
+
+    // The collection should update
+    await vi.waitFor(
+      () => {
+        expect(collection.size).toBe(3)
+        expect(collection.toArray.map((entry) => entry.name)).deep.equals([
+          `one`,
+          `three`,
+          `four`,
+        ])
+      },
+      { timeout: 1000 }
+    )
+
+    await db.execute(`
+        UPDATE documents
+        SET name = 'updated'
+        WHERE name = 'one'
+        `)
+
+    // The collection should update
+    await vi.waitFor(
+      () => {
+        expect(collection.size).toBe(3)
+        expect(collection.toArray.map((entry) => entry.name)).deep.equals([
+          `updated`,
+          `three`,
+          `four`,
+        ])
+      },
+      { timeout: 1000 }
+    )
+  })
+
+  it(`should propagate collection mutations to PowerSync`, async () => {
+    const db = await createDatabase()
+    await createTestData(db)
+
+    const collection = createCollection(
+      powerSyncCollectionOptions<Document>({
+        database: db,
+        tableName: `documents`,
+      })
+    )
+
+    await collection.stateWhenReady()
+
+    // Verify the collection state contains our items
+    expect(collection.size).toBe(3)
+
+    const id = randomUUID()
+    const tx = collection.insert({
+      id,
+      name: `new`,
+    })
+
+    // The insert should optimistically update the collection
+    const newDoc = collection.get(id)
+    expect(newDoc).toBeDefined()
+    expect(newDoc!.name).toBe(`new`)
+
+    await tx.isPersisted.promise
+    // The item should now be present in PowerSync
+    // We should also have patched it back in to Tanstack DB (removing the optimistic state)
+
+    // Now do an update
+    await collection.update(id, (d) => (d.name = `updatedNew`)).isPersisted
+      .promise
+
+    const updatedDoc = collection.get(id)
+    expect(updatedDoc).toBeDefined()
+    expect(updatedDoc!.name).toBe(`updatedNew`)
+
+    await collection.delete(id).isPersisted.promise
+
+    // There should be a crud entries for this
+    const _crudEntries = await db.getAll(`
+        SELECT * FROM ps_crud ORDER BY id`)
+
+    const crudEntries = _crudEntries.map((r) => CrudEntry.fromRow(r as any))
+
+    expect(crudEntries.length).toBe(6)
+    // We can only group transactions for similar operations
+    expect(crudEntries.map((e) => e.op)).toEqual([
+      `PUT`,
+      `PUT`,
+      `PUT`,
+      `PUT`,
+      `PATCH`,
+      `DELETE`,
+    ])
+  })
+
+  it(`should handle transactions`, async () => {
+    const db = await createDatabase()
+    await createTestData(db)
+
+    const collection = createCollection(
+      powerSyncCollectionOptions<Document>({
+        database: db,
+        tableName: `documents`,
+      })
+    )
+
+    await collection.stateWhenReady()
+
+    expect(collection.size).toBe(3)
+
+    const addTx = createTransaction({
+      autoCommit: false,
+      mutationFn: async ({ transaction }) => {
+        await collection.utils.mutateTransaction(transaction)
+      },
+    })
+
+    addTx.mutate(() => {
+      for (let i = 0; i < 5; i++) {
+        collection.insert({ id: randomUUID(), name: `tx-${i}` })
+      }
+    })
+
+    await addTx.commit()
+    await addTx.isPersisted.promise
+
+    expect(collection.size).toBe(8)
+
+    // fetch the ps_crud items
+    // There should be a crud entries for this
+    const _crudEntries = await db.getAll(`
+        SELECT * FROM ps_crud ORDER BY id`)
+    const crudEntries = _crudEntries.map((r) => CrudEntry.fromRow(r as any))
+
+    const lastTransactionId = crudEntries[crudEntries.length - 1]?.transactionId
+    /**
+     * The last items, created in the same transaction, should be in the same
+     * PowerSync transaction.
+     */
+    expect(
+      crudEntries
+        .reverse()
+        .slice(0, 5)
+        .every((crudEntry) => crudEntry.transactionId == lastTransactionId)
+    ).true
+  })
+})
