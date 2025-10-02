@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { tmpdir } from "node:os"
 import {
   CrudEntry,
   PowerSyncDatabase,
@@ -28,15 +29,20 @@ describe(`PowerSync Integration`, () => {
   async function createDatabase() {
     const db = new PowerSyncDatabase({
       database: {
-        dbFilename: `test.sqlite`,
+        dbFilename: `test-${randomUUID()}.sqlite`,
+        dbLocation: tmpdir(),
       },
       schema: APP_SCHEMA,
     })
     onTestFinished(async () => {
-      await db.disconnectAndClear()
+      /**
+       * We don't clear the DB here since that would cause deletes
+       * which would trigger collection updates while the DB is closing.
+       * We currently can't await the async cleanup of TanStack collections (since that method is not async).
+       * So we use unique temporary databases for each test.
+       */
       await db.close()
     })
-    await db.disconnectAndClear()
     return db
   }
 
@@ -84,7 +90,6 @@ describe(`PowerSync Integration`, () => {
         tableName: `documents`,
       })
     )
-
     await collection.stateWhenReady()
 
     // Verify the collection state contains our items

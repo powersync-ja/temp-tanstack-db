@@ -2,19 +2,19 @@ import { DiffTriggerOperation } from "@powersync/common"
 import { asPowerSyncRecord, mapOperation } from "./helpers"
 import { PendingOperationStore } from "./PendingOperationStore"
 import { PowerSyncTransactor } from "./PowerSyncTransactor"
+import type { TriggerDiffRecord } from "@powersync/common"
+import type { StandardSchemaV1 } from "@standard-schema/spec"
+import type {
+  CollectionConfig,
+  InferSchemaOutput,
+  SyncConfig,
+} from "@tanstack/db"
 import type {
   EnhancedPowerSyncCollectionConfig,
   PowerSyncCollectionConfig,
   PowerSyncCollectionUtils,
 } from "./definitions"
 import type { PendingOperation } from "./PendingOperationStore"
-import type {
-  CollectionConfig,
-  InferSchemaOutput,
-  SyncConfig,
-} from "@tanstack/db"
-import type { StandardSchemaV1 } from "@standard-schema/spec"
-import type { TriggerDiffRecord } from "@powersync/common"
 
 /**
  * Creates PowerSync collection options for use with a standard Collection
@@ -207,6 +207,7 @@ export function powerSyncCollectionOptions<
 
       return () => {
         abortController.abort()
+        // We unfortunately cannot await this
         disposeTracking()
       }
     },
