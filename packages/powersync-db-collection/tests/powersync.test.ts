@@ -7,7 +7,12 @@ import {
   Table,
   column,
 } from "@powersync/node"
-import { createCollection, createTransaction } from "@tanstack/db"
+import {
+  createCollection,
+  createTransaction,
+  eq,
+  liveQueryCollectionOptions,
+} from "@tanstack/db"
 import { describe, expect, it, onTestFinished, vi } from "vitest"
 import { powerSyncCollectionOptions } from "../src"
 import { PowerSyncTransactor } from "../src/PowerSyncTransactor"
@@ -382,6 +387,61 @@ describe(`PowerSync Integration`, () => {
         // The collection should be in a clean state
         expect(collection.size).toBe(0)
       }
+    })
+
+    it(`should work with live queries`, async () => {
+      const db = await createDatabase()
+
+      // Create two collections for the same table
+      const collection = createCollection(
+        powerSyncCollectionOptions<Document>({
+          database: db,
+          tableName: `documents`,
+        })
+      )
+      onTestFinished(() => collection.cleanup())
+
+      await collection.stateWhenReady()
+
+      const liveDocuments = createCollection(
+        liveQueryCollectionOptions({
+          query: (q) =>
+            q
+              .from({ document: collection })
+              .where(({ document }) => eq(document.name, `book`))
+              .select(({ document }) => ({
+                id: document.id,
+                name: document.name,
+              })),
+        })
+      )
+
+      expect(liveDocuments.size).eq(0)
+
+      const bookNames = new Set<string>()
+
+      liveDocuments.subscribeChanges((changes) => {
+        changes
+          .map((change) => change.value.name)
+          .forEach((change) => bookNames.add(change!))
+      })
+
+      await collection.insert({
+        id: randomUUID(),
+        name: `notabook`,
+      }).isPersisted.promise
+      await collection.insert({
+        id: randomUUID(),
+        name: `book`,
+      }).isPersisted.promise
+
+      expect(collection.size).eq(2)
+      await vi.waitFor(
+        () => {
+          expect(Array.from(bookNames)).deep.equals([`book`])
+        },
+        { timeout: 1000 }
+      )
     })
   })
 
