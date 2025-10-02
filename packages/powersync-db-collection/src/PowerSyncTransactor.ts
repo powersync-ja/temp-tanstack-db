@@ -70,17 +70,30 @@ export class PowerSyncTransactor<T extends object = Record<string, unknown>> {
      * The transaction might contain ops for different collections.
      * We can do some optimizations for single collection transactions.
      */
-    const mutationsCollections = mutations.map(
+    const mutationsCollectionIds = mutations.map(
       (mutation) => mutation.collection.id
     )
-    const collectionIds = Array.from(new Set(mutationsCollections))
+    const collectionIds = Array.from(new Set(mutationsCollectionIds))
     const lastCollectionMutationIndexes = new Map<string, number>()
+    const allCollections = collectionIds
+      .map((id) => mutations.find((mutation) => mutation.collection.id == id)!)
+      .map((mutation) => mutation.collection)
     for (const collectionId of collectionIds) {
       lastCollectionMutationIndexes.set(
         collectionId,
-        mutationsCollections.lastIndexOf(collectionId)
+        mutationsCollectionIds.lastIndexOf(collectionId)
       )
     }
+
+    // Check all the observers are ready before taking a lock
+    await Promise.all(
+      allCollections.map(async (collection) => {
+        if (collection.isReady()) {
+          return
+        }
+        await new Promise<void>((resolve) => collection.onFirstReady(resolve))
+      })
+    )
 
     // Persist to PowerSync
     const { whenComplete } = await this.database.writeTransaction(

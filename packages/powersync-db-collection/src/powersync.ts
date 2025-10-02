@@ -133,7 +133,6 @@ export function powerSyncCollectionOptions<
   const sync: SyncConfig<T, string> = {
     sync: (params) => {
       const { begin, write, commit, markReady } = params
-
       // Manually create a tracking operation for optimization purposes
       const abortController = new AbortController()
 
@@ -237,6 +236,8 @@ export function powerSyncCollectionOptions<
   const outputConfig: EnhancedPowerSyncCollectionConfig<T, TSchema> = {
     ...restConfig,
     getKey,
+    // Syncing should start immediately since we need to monitor the changes for mutations
+    startSync: true,
     sync,
     onInsert: async (params) => {
       // The transaction here should only ever contain a single insert mutation
