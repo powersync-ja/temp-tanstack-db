@@ -336,6 +336,55 @@ describe(`PowerSync Integration`, () => {
     })
   })
 
+  describe(`General use`, async () => {
+    it(`should rollback transactions on error`, async () => {
+      const db = await createDatabase()
+
+      // Create two collections for the same table
+      const collection = createCollection(
+        powerSyncCollectionOptions<Document>({
+          database: db,
+          tableName: `documents`,
+        })
+      )
+      onTestFinished(() => collection.cleanup())
+
+      const addTx = createTransaction({
+        autoCommit: false,
+        mutationFn: async ({ transaction }) => {
+          await new PowerSyncTransactor({ database: db }).applyTransaction(
+            transaction
+          )
+        },
+      })
+
+      expect(collection.size).eq(0)
+      const id = randomUUID()
+      // Attempt to insert invalid data
+      // We can only do this since we aren't using schema validation here
+      addTx.mutate(() => {
+        collection.insert({
+          id,
+          name: new Error() as unknown as string, // This will cause a SQL error eventually
+        })
+      })
+
+      // This should be present in the optimisic state, but should be reverted when attempting to persist
+      expect(collection.size).eq(1)
+      expect((collection.get(id)?.name as any) instanceof Error).true
+
+      try {
+        await addTx.commit()
+        await addTx.isPersisted.promise
+        expect.fail(`Should have thrown an error`)
+      } catch (error) {
+        expect(error).toBeDefined()
+        // The collection should be in a clean state
+        expect(collection.size).toBe(0)
+      }
+    })
+  })
+
   describe(`Multiple Clients`, async () => {
     it(`should sync updates between multiple clients`, async () => {
       const db = await createDatabase()
