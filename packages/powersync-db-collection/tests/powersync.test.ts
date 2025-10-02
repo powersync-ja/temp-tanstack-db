@@ -8,6 +8,7 @@ import {
   column,
 } from "@powersync/node"
 import {
+  SchemaValidationError,
   createCollection,
   createTransaction,
   eq,
@@ -16,6 +17,7 @@ import {
 import { describe, expect, it, onTestFinished, vi } from "vitest"
 import { powerSyncCollectionOptions } from "../src"
 import { PowerSyncTransactor } from "../src/PowerSyncTransactor"
+import { convertPowerSyncSchemaToSpecs } from "../src/schema"
 import type { AbstractPowerSyncDatabase } from "@powersync/node"
 
 const APP_SCHEMA = new Schema({
@@ -43,6 +45,8 @@ describe(`PowerSync Integration`, () => {
       await db.disconnectAndClear()
       await db.close()
     })
+    // Initial clear in case a test might have failed
+    await db.disconnectAndClear()
     return db
   }
 
@@ -55,6 +59,44 @@ describe(`PowerSync Integration`, () => {
             (uuid(), 'three')
         `)
   }
+
+  describe(`schema`, () => {
+    it(`should accept a schema`, async () => {
+      const db = await createDatabase()
+
+      // the collection should infer types and validate with the schema
+      const collection = createCollection(
+        powerSyncCollectionOptions({
+          database: db,
+          tableName: `documents`,
+          schema: convertPowerSyncSchemaToSpecs(APP_SCHEMA).documents,
+        })
+      )
+
+      collection.insert({
+        id: randomUUID(),
+        name: `aname`,
+      })
+
+      collection.insert({
+        id: randomUUID(),
+        name: null,
+      })
+
+      expect(collection.size).eq(2)
+
+      // should validate inputs
+      try {
+        collection.insert({} as any)
+        console.log(`failed`)
+      } catch (ex) {
+        expect(ex instanceof SchemaValidationError).true
+        if (ex instanceof SchemaValidationError) {
+          expect(ex.message).contains(`id field must be a string`)
+        }
+      }
+    })
+  })
 
   describe(`sync`, () => {
     it(`should initialize and fetch initial data`, async () => {
@@ -341,7 +383,7 @@ describe(`PowerSync Integration`, () => {
     })
   })
 
-  describe(`General use`, async () => {
+  describe(`General use`, () => {
     it(`should rollback transactions on error`, async () => {
       const db = await createDatabase()
 

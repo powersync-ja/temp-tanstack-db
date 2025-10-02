@@ -83,6 +83,10 @@ db.connect(new Connector())
 
 ### 4. Create a TanStack DB Collection
 
+There are two ways to create a collection: using type inference or using schema validation.
+
+#### Option 1: Using Type Inference
+
 ```ts
 import { createCollection } from "@tanstack/react-db"
 import { powerSyncCollectionOptions } from "@tanstack/powersync-db-collection"
@@ -94,6 +98,29 @@ const documentsCollection = createCollection(
   })
 )
 ```
+
+#### Option 2: Using Schema Validation
+
+```ts
+import { createCollection } from "@tanstack/react-db"
+import {
+  powerSyncCollectionOptions,
+  convertPowerSyncSchemaToSpecs,
+} from "@tanstack/powersync-db-collection"
+
+// Convert PowerSync schema to TanStack DB schema
+const schemas = convertPowerSyncSchemaToSpecs(APP_SCHEMA)
+
+const documentsCollection = createCollection(
+  powerSyncCollectionOptions({
+    database: db,
+    tableName: "documents",
+    schema: schemas.documents, // Use schema for runtime type validation
+  })
+)
+```
+
+With schema validation, the collection will validate all inputs at runtime to ensure they match the PowerSync schema types. This provides an extra layer of type safety beyond TypeScript's compile-time checks.
 
 ## Features
 

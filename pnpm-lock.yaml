@@ -652,9 +652,6 @@ importers:
 
   packages/powersync-db-collection:
     dependencies:
-      '@powersync/common':
-        specifier: ^1.39.0
-        version: 1.39.0
       '@standard-schema/spec':
         specifier: ^1.0.0
         version: 1.0.0
@@ -674,6 +671,9 @@ importers:
       '@powersync/better-sqlite3':
         specifier: ^0.2.0
         version: 0.2.0
+      '@powersync/common':
+        specifier: ^1.39.0
+        version: 1.39.0
       '@powersync/node':
         specifier: ^0.11.0
         version: 0.11.0(@powersync/common@1.39.0)
