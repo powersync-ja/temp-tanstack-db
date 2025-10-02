@@ -70,9 +70,18 @@ export class PowerSyncTransactor<T extends object = Record<string, unknown>> {
      * The transaction might contain ops for different collections.
      * We can do some optimizations for single collection transactions.
      */
-    const isMixedTransaction = mutations.some(
-      (mutation) => mutation.collection.id !== mutations[0]?.collection.id
+    const mutationsCollections = mutations.map(
+      (mutation) => mutation.collection.id
     )
+    const collectionIds = Array.from(new Set(mutationsCollections))
+    const lastCollectionMutationIndexes = new Map<string, number>()
+    for (const collectionId of collectionIds) {
+      lastCollectionMutationIndexes.set(
+        collectionId,
+        mutationsCollections.lastIndexOf(collectionId)
+      )
+    }
+
     // Persist to PowerSync
     const { whenComplete } = await this.database.writeTransaction(
       async (tx) => {
@@ -80,13 +89,11 @@ export class PowerSyncTransactor<T extends object = Record<string, unknown>> {
 
         for (const [index, mutation] of mutations.entries()) {
           /**
-           * For mixed transactions we need to check every operation has been seen.
-           * This is since the individual tables are watched independently.
-           *
-           * For a single collection transaction, we only need to check the last operation
-           * has been seen.
+           * Each collection processes events independently. We need to make sure the
+           * last operation for each collection has been seen.
            */
-          const shouldWait = isMixedTransaction || index == mutations.length - 1
+          const shouldWait =
+            index == lastCollectionMutationIndexes.get(mutation.collection.id)
           switch (mutation.type) {
             case `insert`:
               pendingOperations.push(
