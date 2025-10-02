@@ -3,14 +3,17 @@
   "description": "PowerSync collection for TanStack DB",
   "version": "0.0.0",
   "dependencies": {
-    "@powersync/common": "^1.39.0",
     "@standard-schema/spec": "^1.0.0",
     "@tanstack/db": "workspace:*",
     "@tanstack/store": "^0.7.7",
     "debug": "^4.4.3",
     "p-defer": "^4.0.1"
   },
+  "peerDependencies": {
+    "@powersync/common": "^1.39.0"
+  },
   "devDependencies": {
+    "@powersync/common": "^1.39.0",
     "@powersync/better-sqlite3": "^0.2.0",
     "@powersync/node": "^0.11.0",
     "@types/debug": "^4.1.12",
