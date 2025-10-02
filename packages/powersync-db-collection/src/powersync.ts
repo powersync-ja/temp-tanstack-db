@@ -113,7 +113,12 @@ export function powerSyncCollectionOptions<
    * consistent with the database.
    */
   const pendingOperationStore = PendingOperationStore.GLOBAL
-  const trackedTableName = `__${tableName}_tracking`
+  // Keep the tracked table unique in case of multiple tabs.
+  const trackedTableName = `__${tableName}_tracking_${Math.floor(
+    Math.random() * 0xffffffff
+  )
+    .toString(16)
+    .padStart(8, `0`)}`
 
   const transactor = new PowerSyncTransactor<T>({
     database,
@@ -126,89 +131,101 @@ export function powerSyncCollectionOptions<
    * It is not about sync between a client and a server!
    */
   const sync: SyncConfig<T, string> = {
-    sync: async (params) => {
+    sync: (params) => {
       const { begin, write, commit, markReady } = params
 
       // Manually create a tracking operation for optimization purposes
       const abortController = new AbortController()
 
-      database.onChangeWithCallback(
-        {
-          onChange: async () => {
-            await database.writeTransaction(async (context) => {
-              begin()
-              const operations = await context.getAll<TriggerDiffRecord>(
-                `SELECT * FROM ${trackedTableName} ORDER BY timestamp ASC`
-              )
-              const pendingOperations: Array<PendingOperation> = []
+      // The sync function needs to be synchronous
+      async function start() {
+        database.onChangeWithCallback(
+          {
+            onChange: async () => {
+              await database.writeTransaction(async (context) => {
+                begin()
+                const operations = await context.getAll<TriggerDiffRecord>(
+                  `SELECT * FROM ${trackedTableName} ORDER BY timestamp ASC`
+                )
+                const pendingOperations: Array<PendingOperation> = []
 
-              for (const op of operations) {
-                const { id, operation, timestamp, value } = op
-                const parsedValue = {
-                  id,
-                  ...JSON.parse(value),
+                for (const op of operations) {
+                  const { id, operation, timestamp, value } = op
+                  const parsedValue = {
+                    id,
+                    ...JSON.parse(value),
+                  }
+                  const parsedPreviousValue =
+                    op.operation == DiffTriggerOperation.UPDATE
+                      ? { id, ...JSON.parse(op.previous_value) }
+                      : null
+                  write({
+                    type: mapOperation(operation),
+                    value: parsedValue,
+                    previousValue: parsedPreviousValue,
+                  })
+                  pendingOperations.push({
+                    id,
+                    operation,
+                    timestamp,
+                    tableName,
+                  })
                 }
-                const parsedPreviousValue =
-                  op.operation == DiffTriggerOperation.UPDATE
-                    ? { id, ...JSON.parse(op.previous_value) }
-                    : null
+
+                // clear the current operations
+                await context.execute(`DELETE FROM ${trackedTableName}`)
+
+                commit()
+                pendingOperationStore.resolvePendingFor(pendingOperations)
+              })
+            },
+          },
+          {
+            signal: abortController.signal,
+            triggerImmediate: false,
+            tables: [trackedTableName],
+          }
+        )
+
+        const disposeTracking = await database.triggers.createDiffTrigger({
+          source: tableName,
+          destination: trackedTableName,
+          when: {
+            [DiffTriggerOperation.INSERT]: `TRUE`,
+            [DiffTriggerOperation.UPDATE]: `TRUE`,
+            [DiffTriggerOperation.DELETE]: `TRUE`,
+          },
+          hooks: {
+            beforeCreate: async (context) => {
+              begin()
+              for (const row of await context.getAll<T>(
+                `SELECT * FROM ${tableName}`
+              )) {
                 write({
-                  type: mapOperation(operation),
-                  value: parsedValue,
-                  previousValue: parsedPreviousValue,
-                })
-                pendingOperations.push({
-                  id,
-                  operation,
-                  timestamp,
-                  tableName,
+                  type: `insert`,
+                  value: row,
                 })
               }
-
-              // clear the current operations
-              await context.execute(`DELETE FROM ${trackedTableName}`)
-
               commit()
-              pendingOperationStore.resolvePendingFor(pendingOperations)
-            })
+              markReady()
+            },
           },
-        },
-        {
-          signal: abortController.signal,
-          triggerImmediate: false,
-          tables: [trackedTableName],
-        }
-      )
+        })
 
-      const disposeTracking = await database.triggers.createDiffTrigger({
-        source: tableName,
-        destination: trackedTableName,
-        when: {
-          [DiffTriggerOperation.INSERT]: `TRUE`,
-          [DiffTriggerOperation.UPDATE]: `TRUE`,
-          [DiffTriggerOperation.DELETE]: `TRUE`,
-        },
-        hooks: {
-          beforeCreate: async (context) => {
-            begin()
-            for (const row of await context.getAll<T>(
-              `SELECT * FROM ${tableName}`
-            )) {
-              write({
-                type: `insert`,
-                value: row,
-              })
-            }
-            commit()
-            markReady()
-          },
-        },
-      })
+        // If the abort controller was aborted while processing the request above
+        if (abortController.signal.aborted) {
+          await disposeTracking()
+        } else {
+          abortController.signal.addEventListener(`abort`, () => {
+            disposeTracking()
+          })
+        }
+      }
+
+      start()
 
       return () => {
         abortController.abort()
-        // We unfortunately cannot await this
-        disposeTracking()
       }
     },
     // Expose the getSyncMetadata function
