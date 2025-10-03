@@ -13,9 +13,8 @@
     "@powersync/common": "^1.39.0"
   },
   "devDependencies": {
-    "@powersync/common": "^1.39.0",
-    "@powersync/better-sqlite3": "^0.2.0",
-    "@powersync/node": "^0.11.0",
+    "@powersync/common": "0.0.0-dev-20251003085035",
+    "@powersync/node": "0.0.0-dev-20251003085035",
     "@types/debug": "^4.1.12",
     "@vitest/coverage-istanbul": "^3.2.4"
   },

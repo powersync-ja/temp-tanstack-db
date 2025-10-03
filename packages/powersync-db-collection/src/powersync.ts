@@ -3,19 +3,19 @@ import { DEFAULT_BATCH_SIZE } from "./definitions"
 import { asPowerSyncRecord, mapOperation } from "./helpers"
 import { PendingOperationStore } from "./PendingOperationStore"
 import { PowerSyncTransactor } from "./PowerSyncTransactor"
+import type { TriggerDiffRecord } from "@powersync/common"
+import type { StandardSchemaV1 } from "@standard-schema/spec"
+import type {
+  CollectionConfig,
+  InferSchemaOutput,
+  SyncConfig,
+} from "@tanstack/db"
 import type {
   EnhancedPowerSyncCollectionConfig,
   PowerSyncCollectionConfig,
   PowerSyncCollectionUtils,
 } from "./definitions"
 import type { PendingOperation } from "./PendingOperationStore"
-import type {
-  CollectionConfig,
-  InferSchemaOutput,
-  SyncConfig,
-} from "@tanstack/db"
-import type { StandardSchemaV1 } from "@standard-schema/spec"
-import type { TriggerDiffRecord } from "@powersync/common"
 
 /**
  * Creates PowerSync collection options for use with a standard Collection
@@ -142,7 +142,9 @@ export function powerSyncCollectionOptions<
 
       // The sync function needs to be synchronous
       async function start() {
-        database.logger.info(`Sync is starting`)
+        database.logger.info(
+          `Sync is starting for ${tableName} into ${trackedTableName}`
+        )
         database.onChangeWithCallback(
           {
             onChange: async () => {
@@ -227,7 +229,9 @@ export function powerSyncCollectionOptions<
                 commit()
               }
               markReady()
-              database.logger.info(`Sync is ready`)
+              database.logger.info(
+                `Sync is ready for ${tableName} into ${trackedTableName}`
+              )
             },
           },
         })
@@ -247,11 +251,16 @@ export function powerSyncCollectionOptions<
       }
 
       start().catch((error) =>
-        database.logger.error(`Could not start syncing process`, error)
+        database.logger.error(
+          `Could not start syncing process for ${tableName} into ${trackedTableName}`,
+          error
+        )
       )
 
       return () => {
-        database.logger.info(`Sync has been stopped`)
+        database.logger.info(
+          `Sync has been stopped for ${tableName} into ${trackedTableName}`
+        )
         abortController.abort()
       }
     },
