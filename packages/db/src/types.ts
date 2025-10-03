@@ -503,6 +503,28 @@ export interface CollectionConfig<
   sync: SyncConfig<T, TKey>
 }
 
+export type SingleResult = {
+  singleResult: true
+}
+
+export type NonSingleResult = {
+  singleResult?: never
+}
+
+export type MaybeSingleResult = {
+  /**
+   * If enabled the collection will return a single object instead of an array
+   */
+  singleResult?: true
+}
+
+// Only used for live query collections
+export type CollectionConfigSingleRowOption<
+  T extends object = Record<string, unknown>,
+  TKey extends string | number = string | number,
+  TSchema extends StandardSchemaV1 = never,
+> = CollectionConfig<T, TKey, TSchema> & MaybeSingleResult
+
 export type ChangesPayload<T extends object = Record<string, unknown>> = Array<
   ChangeMessage<T>
 >

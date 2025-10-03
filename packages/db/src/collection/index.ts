@@ -24,7 +24,9 @@ import type {
   InferSchemaInput,
   InferSchemaOutput,
   InsertConfig,
+  NonSingleResult,
   OperationConfig,
+  SingleResult,
   SubscribeChangesOptions,
   Transaction as TransactionType,
   UtilsRecord,
@@ -50,6 +52,7 @@ export interface Collection<
   TInsertInput extends object = T,
 > extends CollectionImpl<T, TKey, TUtils, TSchema, TInsertInput> {
   readonly utils: TUtils
+  readonly singleResult?: true
 }
 
 /**
@@ -132,8 +135,22 @@ export function createCollection<
   options: CollectionConfig<InferSchemaOutput<T>, TKey, T> & {
     schema: T
     utils?: TUtils
-  }
-): Collection<InferSchemaOutput<T>, TKey, TUtils, T, InferSchemaInput<T>>
+  } & NonSingleResult
+): Collection<InferSchemaOutput<T>, TKey, TUtils, T, InferSchemaInput<T>> &
+  NonSingleResult
+
+// Overload for when schema is provided and singleResult is true
+export function createCollection<
+  T extends StandardSchemaV1,
+  TKey extends string | number = string | number,
+  TUtils extends UtilsRecord = {},
+>(
+  options: CollectionConfig<InferSchemaOutput<T>, TKey, T> & {
+    schema: T
+    utils?: TUtils
+  } & SingleResult
+): Collection<InferSchemaOutput<T>, TKey, TUtils, T, InferSchemaInput<T>> &
+  SingleResult
 
 // Overload for when no schema is provided
 // the type T needs to be passed explicitly unless it can be inferred from the getKey function in the config
@@ -145,8 +162,21 @@ export function createCollection<
   options: CollectionConfig<T, TKey, never> & {
     schema?: never // prohibit schema if an explicit type is provided
     utils?: TUtils
-  }
-): Collection<T, TKey, TUtils, never, T>
+  } & NonSingleResult
+): Collection<T, TKey, TUtils, never, T> & NonSingleResult
+
+// Overload for when no schema is provided and singleResult is true
+// the type T needs to be passed explicitly unless it can be inferred from the getKey function in the config
+export function createCollection<
+  T extends object,
+  TKey extends string | number = string | number,
+  TUtils extends UtilsRecord = {},
+>(
+  options: CollectionConfig<T, TKey, never> & {
+    schema?: never // prohibit schema if an explicit type is provided
+    utils?: TUtils
+  } & SingleResult
+): Collection<T, TKey, TUtils, never, T> & SingleResult
 
 // Implementation
 export function createCollection(
