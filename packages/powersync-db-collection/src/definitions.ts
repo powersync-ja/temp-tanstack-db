@@ -46,6 +46,19 @@ export type PowerSyncCollectionConfig<
   tableName: string
   /** The PowerSync database instance */
   database: AbstractPowerSyncDatabase
+  /**
+   * The maximum number of documents to read from the SQLite table
+   * in a single batch during the initial sync between PowerSync and the
+   * in-memory TanStack DB collection.
+   *
+   * @remarks
+   * - Defaults to {@link DEFAULT_BATCH_SIZE} if not specified.
+   * - Larger values reduce the number of round trips to the storage
+   *   engine but increase memory usage per batch.
+   * - Smaller values may lower memory usage and allow earlier
+   *   streaming of initial results, at the cost of more query calls.
+   */
+  syncBatchSize?: number
 }
 
 export type PowerSyncCollectionMeta = {
@@ -71,3 +84,8 @@ export type EnhancedPowerSyncCollectionConfig<
 export type PowerSyncCollectionUtils = {
   getMeta: () => PowerSyncCollectionMeta
 }
+
+/**
+ * Default value for {@link PowerSyncCollectionConfig#syncBatchSize}
+ */
+export const DEFAULT_BATCH_SIZE = 1000

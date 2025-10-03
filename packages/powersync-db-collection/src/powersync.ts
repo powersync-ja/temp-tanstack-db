@@ -1,20 +1,21 @@
-import { DiffTriggerOperation } from "@powersync/common"
+import { DiffTriggerOperation, sanitizeSQL } from "@powersync/common"
+import { DEFAULT_BATCH_SIZE } from "./definitions"
 import { asPowerSyncRecord, mapOperation } from "./helpers"
 import { PendingOperationStore } from "./PendingOperationStore"
 import { PowerSyncTransactor } from "./PowerSyncTransactor"
-import type { TriggerDiffRecord } from "@powersync/common"
-import type { StandardSchemaV1 } from "@standard-schema/spec"
-import type {
-  CollectionConfig,
-  InferSchemaOutput,
-  SyncConfig,
-} from "@tanstack/db"
 import type {
   EnhancedPowerSyncCollectionConfig,
   PowerSyncCollectionConfig,
   PowerSyncCollectionUtils,
 } from "./definitions"
 import type { PendingOperation } from "./PendingOperationStore"
+import type {
+  CollectionConfig,
+  InferSchemaOutput,
+  SyncConfig,
+} from "@tanstack/db"
+import type { StandardSchemaV1 } from "@standard-schema/spec"
+import type { TriggerDiffRecord } from "@powersync/common"
 
 /**
  * Creates PowerSync collection options for use with a standard Collection
@@ -100,7 +101,12 @@ export function powerSyncCollectionOptions<
 >(
   config: PowerSyncCollectionConfig<T, TSchema>
 ): EnhancedPowerSyncCollectionConfig<T, TSchema> {
-  const { database, tableName, ...restConfig } = config
+  const {
+    database,
+    tableName,
+    syncBatchSize = DEFAULT_BATCH_SIZE,
+    ...restConfig
+  } = config
 
   /**
    * The onInsert, onUpdate, onDelete handlers should only return
@@ -202,16 +208,24 @@ export function powerSyncCollectionOptions<
           },
           hooks: {
             beforeCreate: async (context) => {
-              begin()
-              for (const row of await context.getAll<T>(
-                `SELECT * FROM ${tableName}`
-              )) {
-                write({
-                  type: `insert`,
-                  value: row,
-                })
+              let currentBatchCount = syncBatchSize
+              let cursor = 0
+              while (currentBatchCount == syncBatchSize) {
+                begin()
+                const batchItems = await context.getAll<T>(
+                  sanitizeSQL`SELECT * FROM ${tableName} LIMIT ? OFFSET ?`,
+                  [syncBatchSize, cursor]
+                )
+                currentBatchCount = batchItems.length
+                cursor += currentBatchCount
+                for (const row of batchItems) {
+                  write({
+                    type: `insert`,
+                    value: row,
+                  })
+                }
+                commit()
               }
-              commit()
               markReady()
               database.logger.info(`Sync is ready`)
             },
