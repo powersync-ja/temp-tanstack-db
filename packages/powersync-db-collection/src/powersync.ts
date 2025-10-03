@@ -128,55 +128,61 @@ export function powerSyncCollectionOptions<
    * "sync"
    * Notice that this describes the Sync between the local SQLite table
    * and the in-memory tanstack-db collection.
-   * It is not about sync between a client and a server!
    */
   const sync: SyncConfig<T, string> = {
     sync: (params) => {
       const { begin, write, commit, markReady } = params
-      // Manually create a tracking operation for optimization purposes
       const abortController = new AbortController()
 
       // The sync function needs to be synchronous
       async function start() {
+        database.logger.info(`Sync is starting`)
         database.onChangeWithCallback(
           {
             onChange: async () => {
-              await database.writeTransaction(async (context) => {
-                begin()
-                const operations = await context.getAll<TriggerDiffRecord>(
-                  `SELECT * FROM ${trackedTableName} ORDER BY timestamp ASC`
-                )
-                const pendingOperations: Array<PendingOperation> = []
+              await database
+                .writeTransaction(async (context) => {
+                  begin()
+                  const operations = await context.getAll<TriggerDiffRecord>(
+                    `SELECT * FROM ${trackedTableName} ORDER BY timestamp ASC`
+                  )
+                  const pendingOperations: Array<PendingOperation> = []
 
-                for (const op of operations) {
-                  const { id, operation, timestamp, value } = op
-                  const parsedValue = {
-                    id,
-                    ...JSON.parse(value),
+                  for (const op of operations) {
+                    const { id, operation, timestamp, value } = op
+                    const parsedValue = {
+                      id,
+                      ...JSON.parse(value),
+                    }
+                    const parsedPreviousValue =
+                      op.operation == DiffTriggerOperation.UPDATE
+                        ? { id, ...JSON.parse(op.previous_value) }
+                        : null
+                    write({
+                      type: mapOperation(operation),
+                      value: parsedValue,
+                      previousValue: parsedPreviousValue,
+                    })
+                    pendingOperations.push({
+                      id,
+                      operation,
+                      timestamp,
+                      tableName,
+                    })
                   }
-                  const parsedPreviousValue =
-                    op.operation == DiffTriggerOperation.UPDATE
-                      ? { id, ...JSON.parse(op.previous_value) }
-                      : null
-                  write({
-                    type: mapOperation(operation),
-                    value: parsedValue,
-                    previousValue: parsedPreviousValue,
-                  })
-                  pendingOperations.push({
-                    id,
-                    operation,
-                    timestamp,
-                    tableName,
-                  })
-                }
 
-                // clear the current operations
-                await context.execute(`DELETE FROM ${trackedTableName}`)
+                  // clear the current operations
+                  await context.execute(`DELETE FROM ${trackedTableName}`)
 
-                commit()
-                pendingOperationStore.resolvePendingFor(pendingOperations)
-              })
+                  commit()
+                  pendingOperationStore.resolvePendingFor(pendingOperations)
+                })
+                .catch((error) => {
+                  database.logger.error(
+                    `An error has been detected in the sync handler`,
+                    error
+                  )
+                })
             },
           },
           {
@@ -207,6 +213,7 @@ export function powerSyncCollectionOptions<
               }
               commit()
               markReady()
+              database.logger.info(`Sync is ready`)
             },
           },
         })
@@ -215,15 +222,22 @@ export function powerSyncCollectionOptions<
         if (abortController.signal.aborted) {
           await disposeTracking()
         } else {
-          abortController.signal.addEventListener(`abort`, () => {
-            disposeTracking()
-          })
+          abortController.signal.addEventListener(
+            `abort`,
+            () => {
+              disposeTracking()
+            },
+            { once: true }
+          )
         }
       }
 
-      start()
+      start().catch((error) =>
+        database.logger.error(`Could not start syncing process`, error)
+      )
 
       return () => {
+        database.logger.info(`Sync has been stopped`)
         abortController.abort()
       }
     },
