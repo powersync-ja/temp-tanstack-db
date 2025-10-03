@@ -1,6 +1,7 @@
 import { BTree } from "../utils/btree.js"
 import { defaultComparator, normalizeValue } from "../utils/comparison.js"
 import { BaseIndex } from "./base-index.js"
+import type { CompareOptions } from "../query/builder/types.js"
 import type { BasicExpression } from "../query/ir.js"
 import type { IndexOperation } from "./base-index.js"
 
@@ -9,6 +10,7 @@ import type { IndexOperation } from "./base-index.js"
  */
 export interface BTreeIndexOptions {
   compareFn?: (a: any, b: any) => number
+  compareOptions?: CompareOptions
 }
 
 /**
@@ -53,6 +55,9 @@ export class BTreeIndex<
   ) {
     super(id, expression, name, options)
     this.compareFn = options?.compareFn ?? defaultComparator
+    if (options?.compareOptions) {
+      this.compareOptions = options!.compareOptions
+    }
     this.orderedEntries = new BTree(this.compareFn)
   }
 
@@ -248,10 +253,12 @@ export class BTreeIndex<
   take(n: number, from?: any, filterFn?: (key: TKey) => boolean): Array<TKey> {
     const keysInResult: Set<TKey> = new Set()
     const result: Array<TKey> = []
-    const nextKey = (k?: any) => this.orderedEntries.nextHigherKey(k)
+    const nextPair = (k?: any) => this.orderedEntries.nextHigherPair(k)
+    let pair: [any, any] | undefined
     let key = normalizeValue(from)
 
-    while ((key = nextKey(key)) && result.length < n) {
+    while ((pair = nextPair(key)) !== undefined && result.length < n) {
+      key = pair[0]
       const keys = this.valueMap.get(key)
       if (keys) {
         const it = keys.values()
