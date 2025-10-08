@@ -54,15 +54,21 @@ The `electricCollectionOptions` function accepts the following options:
 
 ### Persistence Handlers
 
+Handlers are called before mutations to persist changes to your backend:
+
 - `onInsert`: Handler called before insert operations
-- `onUpdate`: Handler called before update operations  
+- `onUpdate`: Handler called before update operations
 - `onDelete`: Handler called before delete operations
 
-## Persistence Handlers
+Each handler should return `{ txid }` to wait for synchronization. For cases where your API can not return txids, use the `awaitMatch` utility function.
 
-Handlers can be defined to run on mutations. They are useful to send mutations to the backend and confirming them once Electric delivers the corresponding transactions. Until confirmation, TanStack DB blocks sync data for the collection to prevent race conditions. To avoid any delays, it’s important to use a matching strategy.
+## Persistence Handlers & Synchronization
 
-The most reliable strategy is for the backend to include the transaction ID (txid) in its response, allowing the client to match each mutation with Electric’s transaction identifiers for precise confirmation. If no strategy is provided, client mutations are automatically confirmed after three seconds.
+Handlers persist mutations to the backend and wait for Electric to sync the changes back. This prevents UI glitches where optimistic updates would be removed and then re-added. TanStack DB blocks sync data until the mutation is confirmed, ensuring smooth user experience.
+
+### 1. Using Txid (Recommended)
+
+The recommended approach uses PostgreSQL transaction IDs (txids) for precise matching. The backend returns a txid, and the client waits for that specific txid to appear in the Electric stream.
 
 ```typescript
 const todosCollection = createCollection(
@@ -74,15 +80,83 @@ const todosCollection = createCollection(
       url: '/api/todos',
       params: { table: 'todos' },
     },
-    
+
     onInsert: async ({ transaction }) => {
       const newItem = transaction.mutations[0].modified
       const response = await api.todos.create(newItem)
-      
+
+      // Return txid to wait for sync
       return { txid: response.txid }
     },
-    
-    // you can also implement onUpdate and onDelete handlers
+
+    onUpdate: async ({ transaction }) => {
+      const { original, changes } = transaction.mutations[0]
+      const response = await api.todos.update({
+        where: { id: original.id },
+        data: changes
+      })
+
+      return { txid: response.txid }
+    }
+  })
+)
+```
+
+### 2. Using Custom Match Functions
+
+For cases where txids aren't available, use the `awaitMatch` utility function to wait for synchronization with custom matching logic:
+
+```typescript
+import { isChangeMessage } from '@tanstack/electric-db-collection'
+
+const todosCollection = createCollection(
+  electricCollectionOptions({
+    id: 'todos',
+    getKey: (item) => item.id,
+    shapeOptions: {
+      url: '/api/todos',
+      params: { table: 'todos' },
+    },
+
+    onInsert: async ({ transaction, collection }) => {
+      const newItem = transaction.mutations[0].modified
+      await api.todos.create(newItem)
+
+      // Use awaitMatch utility for custom matching
+      await collection.utils.awaitMatch(
+        (message) => {
+          return isChangeMessage(message) &&
+                 message.headers.operation === 'insert' &&
+                 message.value.text === newItem.text
+        },
+        5000 // timeout in ms (optional, defaults to 3000)
+      )
+    }
+  })
+)
+```
+
+### 3. Using Simple Timeout
+
+For quick prototyping or when you're confident about timing, you can use a simple timeout. This is crude but works as almost always the data will be synced back in under 2 seconds:
+
+```typescript
+const todosCollection = createCollection(
+  electricCollectionOptions({
+    id: 'todos',
+    getKey: (item) => item.id,
+    shapeOptions: {
+      url: '/api/todos',
+      params: { table: 'todos' },
+    },
+
+    onInsert: async ({ transaction }) => {
+      const newItem = transaction.mutations[0].modified
+      await api.todos.create(newItem)
+
+      // Simple timeout approach
+      await new Promise(resolve => setTimeout(resolve, 2000))
+    }
   })
 )
 ```
@@ -162,7 +236,9 @@ export const ServerRoute = createServerFileRoute("/api/todos").methods({
 
 ## Optimistic Updates with Explicit Transactions
 
-For more advanced use cases, you can create custom actions that can do multiple mutations across collections transactionally. In this case, you need to explicitly await for the transaction ID using `utils.awaitTxId()`.
+For more advanced use cases, you can create custom actions that can do multiple mutations across collections transactionally. You can use the utility methods to wait for synchronization with different strategies:
+
+### Using Txid Strategy
 
 ```typescript
 const addTodoAction = createOptimisticAction({
@@ -184,7 +260,41 @@ const addTodoAction = createOptimisticAction({
       data: { text, completed: false }
     })
     
+    // Wait for the specific txid
     await todosCollection.utils.awaitTxId(response.txid)
+  }
+})
+```
+
+### Using Custom Match Function
+
+```typescript
+import { isChangeMessage } from '@tanstack/electric-db-collection'
+
+const addTodoAction = createOptimisticAction({
+  onMutate: ({ text }) => {
+    const tempId = crypto.randomUUID()
+    todosCollection.insert({
+      id: tempId,
+      text,
+      completed: false,
+      created_at: new Date(),
+    })
+  },
+  
+  mutationFn: async ({ text }) => {
+    await api.todos.create({
+      data: { text, completed: false }
+    })
+    
+    // Wait for matching message
+    await todosCollection.utils.awaitMatch(
+      (message) => {
+        return isChangeMessage(message) && 
+               message.headers.operation === 'insert' &&
+               message.value.text === text
+      }
+    )
   }
 })
 ```
@@ -193,13 +303,56 @@ const addTodoAction = createOptimisticAction({
 
 The collection provides these utility methods via `collection.utils`:
 
-- `awaitTxId(txid, timeout?)`: Manually wait for a specific transaction ID to be synchronized
+### `awaitTxId(txid, timeout?)`
+
+Manually wait for a specific transaction ID to be synchronized:
 
 ```typescript
-todosCollection.utils.awaitTxId(12345)
+// Wait for specific txid
+await todosCollection.utils.awaitTxId(12345)
+
+// With custom timeout (default is 30 seconds)
+await todosCollection.utils.awaitTxId(12345, 10000)
 ```
 
 This is useful when you need to ensure a mutation has been synchronized before proceeding with other operations.
+
+### `awaitMatch(matchFn, timeout?)`
+
+Manually wait for a custom match function to find a matching message:
+
+```typescript
+import { isChangeMessage } from '@tanstack/electric-db-collection'
+
+// Wait for a specific message pattern
+await todosCollection.utils.awaitMatch(
+  (message) => {
+    return isChangeMessage(message) &&
+           message.headers.operation === 'insert' &&
+           message.value.text === 'New Todo'
+  },
+  5000 // timeout in ms
+)
+```
+
+### Helper Functions
+
+The package exports helper functions for use in custom match functions:
+
+- `isChangeMessage(message)`: Check if a message is a data change (insert/update/delete)
+- `isControlMessage(message)`: Check if a message is a control message (up-to-date, must-refetch)
+
+```typescript
+import { isChangeMessage, isControlMessage } from '@tanstack/electric-db-collection'
+
+// Use in custom match functions
+const matchFn = (message) => {
+  if (isChangeMessage(message)) {
+    return message.headers.operation === 'insert'
+  }
+  return false
+}
+```
 
 ## Debugging
 

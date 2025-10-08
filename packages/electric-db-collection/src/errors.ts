@@ -22,32 +22,16 @@ export class TimeoutWaitingForTxIdError extends ElectricDBCollectionError {
   }
 }
 
-export class ElectricInsertHandlerMustReturnTxIdError extends ElectricDBCollectionError {
+export class TimeoutWaitingForMatchError extends ElectricDBCollectionError {
   constructor(collectionId?: string) {
-    super(
-      `Electric collection onInsert handler must return a txid or array of txids`,
-      collectionId
-    )
-    this.name = `ElectricInsertHandlerMustReturnTxIdError`
+    super(`Timeout waiting for custom match function`, collectionId)
+    this.name = `TimeoutWaitingForMatchError`
   }
 }
 
-export class ElectricUpdateHandlerMustReturnTxIdError extends ElectricDBCollectionError {
+export class StreamAbortedError extends ElectricDBCollectionError {
   constructor(collectionId?: string) {
-    super(
-      `Electric collection onUpdate handler must return a txid or array of txids`,
-      collectionId
-    )
-    this.name = `ElectricUpdateHandlerMustReturnTxIdError`
-  }
-}
-
-export class ElectricDeleteHandlerMustReturnTxIdError extends ElectricDBCollectionError {
-  constructor(collectionId?: string) {
-    super(
-      `Electric collection onDelete handler must return a txid or array of txids`,
-      collectionId
-    )
-    this.name = `ElectricDeleteHandlerMustReturnTxIdError`
+    super(`Stream aborted`, collectionId)
+    this.name = `StreamAbortedError`
   }
 }
