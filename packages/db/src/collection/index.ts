@@ -25,7 +25,6 @@ import type {
   InferSchemaOutput,
   InsertConfig,
   NonSingleResult,
-  OnLoadMoreOptions,
   OperationConfig,
   SingleResult,
   SubscribeChangesOptions,
@@ -218,7 +217,7 @@ export class CollectionImpl<
   private _events: CollectionEventsManager
   private _changes: CollectionChangesManager<TOutput, TKey, TSchema, TInput>
   public _lifecycle: CollectionLifecycleManager<TOutput, TKey, TSchema, TInput>
-  private _sync: CollectionSyncManager<TOutput, TKey, TSchema, TInput>
+  public _sync: CollectionSyncManager<TOutput, TKey, TSchema, TInput>
   private _indexes: CollectionIndexesManager<TOutput, TKey, TSchema, TInput>
   private _mutations: CollectionMutationsManager<
     TOutput,
@@ -303,6 +302,7 @@ export class CollectionImpl<
       collection: this, // Required for passing to config.sync callback
       state: this._state,
       lifecycle: this._lifecycle,
+      events: this._events,
     })
 
     // Only start sync immediately if explicitly enabled
@@ -356,23 +356,19 @@ export class CollectionImpl<
   }
 
   /**
+   * Check if the collection is currently loading more data
+   * @returns true if the collection has pending load more operations, false otherwise
+   */
+  public get isLoadingSubset(): boolean {
+    return this._sync.isLoadingSubset
+  }
+
+  /**
    * Start sync immediately - internal method for compiled queries
    * This bypasses lazy loading for special cases like live query results
    */
   public startSyncImmediate(): void {
     this._sync.startSync()
-  }
-
-  /**
-   * Requests the sync layer to load more data.
-   * @param options Options to control what data is being loaded
-   * @returns If data loading is asynchronous, this method returns a promise that resolves when the data is loaded.
-   *          If data loading is synchronous, the data is loaded when the method returns.
-   */
-  public syncMore(options: OnLoadMoreOptions): void | Promise<void> {
-    if (this._sync.syncOnLoadMoreFn) {
-      return this._sync.syncOnLoadMoreFn(options)
-    }
   }
 
   /**
