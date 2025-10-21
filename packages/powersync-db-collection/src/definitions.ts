@@ -1,11 +1,7 @@
-import type { ExtractedTable } from "./helpers"
-import type {
-  AbstractPowerSyncDatabase,
-  ColumnsType,
-  Table,
-} from "@powersync/common"
+import type { AbstractPowerSyncDatabase, Table } from "@powersync/common"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
 import type { BaseCollectionConfig, CollectionConfig } from "@tanstack/db"
+import type { ExtractedTable } from "./helpers"
 
 /**
  * Configuration interface for PowerSync collection options
@@ -41,14 +37,14 @@ import type { BaseCollectionConfig, CollectionConfig } from "@tanstack/db"
  * ```
  */
 export type PowerSyncCollectionConfig<
-  TableType extends Table<ColumnsType> = Table<ColumnsType>,
+  TTable extends Table = Table,
   TSchema extends StandardSchemaV1 = never,
 > = Omit<
-  BaseCollectionConfig<ExtractedTable<TableType[`columnMap`]>, string, TSchema>,
+  BaseCollectionConfig<ExtractedTable<TTable>, string, TSchema>,
   `onInsert` | `onUpdate` | `onDelete` | `getKey`
 > & {
   /** The PowerSync Schema Table definition */
-  table: TableType
+  table: TTable
   /** The PowerSync database instance */
   database: AbstractPowerSyncDatabase
   /**
@@ -78,13 +74,9 @@ export type PowerSyncCollectionMeta = {
 }
 
 export type EnhancedPowerSyncCollectionConfig<
-  TableType extends Table<any> = Table<any>,
+  TTable extends Table = Table,
   TSchema extends StandardSchemaV1 = never,
-> = CollectionConfig<
-  ExtractedTable<TableType[`columnMap`]>,
-  string,
-  TSchema
-> & {
+> = CollectionConfig<ExtractedTable<TTable>, string, TSchema> & {
   id?: string
   utils: PowerSyncCollectionUtils
   schema?: TSchema

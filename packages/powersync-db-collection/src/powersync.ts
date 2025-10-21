@@ -4,58 +4,28 @@ import { asPowerSyncRecord, mapOperation } from "./helpers"
 import { PendingOperationStore } from "./PendingOperationStore"
 import { PowerSyncTransactor } from "./PowerSyncTransactor"
 import { convertTableToSchema } from "./schema"
-import type { ExtractedTable } from "./helpers"
-import type { PendingOperation } from "./PendingOperationStore"
+import type { Table, TriggerDiffRecord } from "@powersync/common"
+import type { StandardSchemaV1 } from "@standard-schema/spec"
+import type { CollectionConfig, SyncConfig } from "@tanstack/db"
 import type {
   EnhancedPowerSyncCollectionConfig,
   PowerSyncCollectionConfig,
   PowerSyncCollectionUtils,
 } from "./definitions"
-import type { CollectionConfig, SyncConfig } from "@tanstack/db"
-import type { StandardSchemaV1 } from "@standard-schema/spec"
-import type { ColumnsType, Table, TriggerDiffRecord } from "@powersync/common"
+import type { ExtractedTable } from "./helpers"
+import type { PendingOperation } from "./PendingOperationStore"
 
 /**
  * Creates PowerSync collection options for use with a standard Collection
  *
- * @template TExplicit - The explicit type of items in the collection (highest priority)
- * @template TSchema - The schema type for validation and type inference (second priority)
+ * @template TTable - The SQLite based typing
+ * @template TSchema - The schema type for validation - optionally supports a custom input type
  * @param config - Configuration options for the PowerSync collection
  * @returns Collection options with utilities
  */
 
-// Overload for when schema is provided
 /**
- * Creates a PowerSync collection configuration with schema validation.
- *
- * @example
- * ```typescript
- * // With schema validation
- * const APP_SCHEMA = new Schema({
- *   documents: new Table({
- *     name: column.text,
- *   }),
- * })
- *
- * const collection = createCollection(
- *   powerSyncCollectionOptions({
- *     database: db,
- *     table: APP_SCHEMA.props.documents,
- *     schema: TODO
- *   })
- * )
- * ```
- */
-// TODO!!!
-// export function powerSyncCollectionOptions<T extends StandardSchemaV1>(
-//   config: PowerSyncCollectionConfig<InferSchemaOutput<T>, T>
-// ): CollectionConfig<InferSchemaOutput<T>, string, T> & {
-//   schema: T
-//   utils: PowerSyncCollectionUtils
-// }
-
-/**
- * Creates a PowerSync collection configuration without schema validation.
+ * Creates a PowerSync collection configuration with basic default validation.
  *
  * @example
  * ```typescript
@@ -82,26 +52,62 @@ import type { ColumnsType, Table, TriggerDiffRecord } from "@powersync/common"
  * )
  * ```
  */
-export function powerSyncCollectionOptions<
-  TableType extends Table<ColumnsType> = Table<ColumnsType>,
->(
-  config: PowerSyncCollectionConfig<TableType> & {
-    schema?: never
-  }
-): CollectionConfig<ExtractedTable<TableType[`columnMap`]>, string> & {
-  schema?: never
+export function powerSyncCollectionOptions<TTable extends Table = Table>(
+  config: PowerSyncCollectionConfig<TTable, never>
+): CollectionConfig<ExtractedTable<TTable>, string, never> & {
   utils: PowerSyncCollectionUtils
+}
+
+// Overload for when schema is provided
+/**
+ * Creates a PowerSync collection configuration with schema validation.
+ *
+ * @example
+ * ```typescript
+ * import { z } from "zod"
+ *
+ * // The PowerSync SQLite Schema
+ * const APP_SCHEMA = new Schema({
+ *   documents: new Table({
+ *     name: column.text,
+ *   }),
+ * })
+ *
+ * // Advanced Zod validations. The output type of this schema
+ * // is constrained to the SQLite schema of APP_SCHEMA
+ * const schema = z.object({
+ *    id: z.string(),
+ *    name: z.string().min(3, { message: "Should be at least 3 characters" }).nullable(),
+ * })
+ *
+ * const collection = createCollection(
+ *   powerSyncCollectionOptions({
+ *     database: db,
+ *     table: APP_SCHEMA.props.documents,
+ *     schema
+ *   })
+ * )
+ * ```
+ */
+export function powerSyncCollectionOptions<
+  TTable extends Table,
+  TSchema extends StandardSchemaV1<ExtractedTable<TTable>, any>,
+>(
+  config: PowerSyncCollectionConfig<TTable, TSchema>
+): CollectionConfig<ExtractedTable<TTable>, string, TSchema> & {
+  utils: PowerSyncCollectionUtils
+  schema: TSchema
 }
 
 /**
  * Implementation of powerSyncCollectionOptions that handles both schema and non-schema configurations.
  */
 export function powerSyncCollectionOptions<
-  TableType extends Table<ColumnsType> = Table<ColumnsType>,
+  TTable extends Table = Table,
   TSchema extends StandardSchemaV1 = never,
 >(
-  config: PowerSyncCollectionConfig<TableType, TSchema>
-): EnhancedPowerSyncCollectionConfig<TableType, TSchema> {
+  config: PowerSyncCollectionConfig<TTable, TSchema>
+): EnhancedPowerSyncCollectionConfig<TTable, TSchema> {
   const {
     database,
     table,
@@ -110,7 +116,7 @@ export function powerSyncCollectionOptions<
     ...restConfig
   } = config
 
-  type RecordType = ExtractedTable<TableType[`columnMap`]>
+  type RecordType = ExtractedTable<TTable>
   const { viewName } = table
 
   // We can do basic runtime validations for columns if not explicit schema has been provided
@@ -277,7 +283,7 @@ export function powerSyncCollectionOptions<
 
   const getKey = (record: RecordType) => asPowerSyncRecord(record).id
 
-  const outputConfig: EnhancedPowerSyncCollectionConfig<TableType, TSchema> = {
+  const outputConfig: EnhancedPowerSyncCollectionConfig<TTable, TSchema> = {
     ...restConfig,
     schema,
     getKey,
@@ -286,7 +292,6 @@ export function powerSyncCollectionOptions<
     sync,
     onInsert: async (params) => {
       // The transaction here should only ever contain a single insert mutation
-      params.transaction
       return await transactor.applyTransaction(params.transaction)
     },
     onUpdate: async (params) => {

@@ -15,6 +15,7 @@ import {
   liveQueryCollectionOptions,
 } from "@tanstack/db"
 import { describe, expect, it, onTestFinished, vi } from "vitest"
+import { z } from "zod"
 import { powerSyncCollectionOptions } from "../src"
 import { PowerSyncTransactor } from "../src/PowerSyncTransactor"
 import type { AbstractPowerSyncDatabase } from "@powersync/node"
@@ -99,6 +100,58 @@ describe(`PowerSync Integration`, () => {
         expect(ex instanceof SchemaValidationError).true
         if (ex instanceof SchemaValidationError) {
           expect(ex.message).contains(`id field must be a string`)
+        }
+      }
+    })
+
+    it(`should allow for advanced validations`, async () => {
+      const db = await createDatabase()
+
+      const errorMessage = `Name must be at least 3 characters`
+      const schema = z.object({
+        id: z.string(),
+        name: z.string().min(3, { message: errorMessage }).nullable(),
+      })
+
+      const collection = createCollection(
+        powerSyncCollectionOptions({
+          database: db,
+          table: APP_SCHEMA.props.documents,
+          schema,
+        })
+      )
+      onTestFinished(() => collection.cleanup())
+
+      try {
+        collection.insert({
+          id: randomUUID(),
+          name: `2`,
+        })
+        expect.fail(`Should throw a validation error`)
+      } catch (ex) {
+        expect(ex instanceof SchemaValidationError).true
+        if (ex instanceof SchemaValidationError) {
+          console.log(ex)
+          expect(ex.message).contains(errorMessage)
+        }
+      }
+
+      collection.insert({
+        id: randomUUID(),
+        name: null,
+      })
+
+      expect(collection.size).eq(1)
+
+      // should validate inputs
+      try {
+        collection.insert({} as any)
+        console.log(`failed`)
+      } catch (ex) {
+        expect(ex instanceof SchemaValidationError).true
+        if (ex instanceof SchemaValidationError) {
+          console.log(ex)
+          expect(ex.message).contains(`Required - path: id`)
         }
       }
     })

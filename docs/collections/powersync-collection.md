@@ -101,9 +101,9 @@ const documentsCollection = createCollection(
 )
 ```
 
-#### Option 2: Using Schema Validation
+#### Option 2: Using Advanced Schema Validation
 
-TODO
+Additional validations can be performed by supplying a Standard Schema.
 
 ```ts
 import { createCollection } from "@tanstack/react-db"
@@ -111,15 +111,19 @@ import {
   powerSyncCollectionOptions,
   convertPowerSyncSchemaToSpecs,
 } from "@tanstack/powersync-db-collection"
+import { z } from "zod"
 
-// Convert PowerSync schema to TanStack DB schema
-const schemas = convertPowerSyncSchemaToSpecs(APP_SCHEMA)
+// The output of this schema must correspond to the SQLite schema
+const schema = z.object({
+  id: z.string(),
+  name: z.string().min(3, { message: errorMessage }).nullable(),
+})
 
 const documentsCollection = createCollection(
   powerSyncCollectionOptions({
     database: db,
-    tableName: "documents",
-    schema: schemas.documents, // Use schema for runtime type validation
+    table: APP_SCHEMA.props.documents,
+    schema,
   })
 )
 ```

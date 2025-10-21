@@ -1,5 +1,5 @@
 import { DiffTriggerOperation } from "@powersync/common"
-import type { ColumnsType, ExtractColumnValueType } from "@powersync/common"
+import type { ExtractColumnValueType, Table } from "@powersync/common"
 
 /**
  * All PowerSync table records have a uuid `id` column.
@@ -20,12 +20,14 @@ export type PowerSyncRecord = {
  *   name: column.text,
  *   age: column.integer
  * })
- * type TableType = ExtractedTable<typeof table.columnMap>
+ * type TableType = ExtractedTable<typeof table>
  * // Results in: { name: string | null, age: number | null }
  * ```
  */
-export type ExtractedTable<Columns extends ColumnsType> = {
-  [K in keyof Columns]: ExtractColumnValueType<Columns[K]>
+export type ExtractedTable<TTable extends Table> = {
+  [K in keyof TTable[`columnMap`]]: ExtractColumnValueType<
+    TTable[`columnMap`][K]
+  >
 } & {
   id: string
 }
