@@ -17,20 +17,19 @@ import {
 import { describe, expect, it, onTestFinished, vi } from "vitest"
 import { powerSyncCollectionOptions } from "../src"
 import { PowerSyncTransactor } from "../src/PowerSyncTransactor"
-import { convertPowerSyncSchemaToSpecs } from "../src/schema"
 import type { AbstractPowerSyncDatabase } from "@powersync/node"
 
 const APP_SCHEMA = new Schema({
   users: new Table({
     name: column.text,
   }),
-  documents: new Table({
-    name: column.text,
-  }),
+  documents: new Table(
+    {
+      name: column.text,
+    },
+    { viewName: `documents` }
+  ),
 })
-
-type Document = (typeof APP_SCHEMA)[`types`][`documents`]
-type User = (typeof APP_SCHEMA)[`types`][`users`]
 
 describe(`PowerSync Integration`, () => {
   async function createDatabase() {
@@ -51,6 +50,18 @@ describe(`PowerSync Integration`, () => {
     return db
   }
 
+  function createDocumentsCollection(db: PowerSyncDatabase) {
+    const collection = createCollection(
+      powerSyncCollectionOptions({
+        database: db,
+        // We get typing and a default validator from this
+        table: APP_SCHEMA.props.documents,
+      })
+    )
+    onTestFinished(() => collection.cleanup())
+    return collection
+  }
+
   async function createTestData(db: AbstractPowerSyncDatabase) {
     await db.execute(`
         INSERT into documents (id, name)
@@ -62,17 +73,11 @@ describe(`PowerSync Integration`, () => {
   }
 
   describe(`schema`, () => {
-    it(`should accept a schema`, async () => {
+    it(`should use basic runtime validations from automatic schema`, async () => {
       const db = await createDatabase()
 
       // the collection should infer types and validate with the schema
-      const collection = createCollection(
-        powerSyncCollectionOptions({
-          database: db,
-          tableName: `documents`,
-          schema: convertPowerSyncSchemaToSpecs(APP_SCHEMA).documents,
-        })
-      )
+      const collection = createDocumentsCollection(db)
 
       collection.insert({
         id: randomUUID(),
@@ -103,14 +108,7 @@ describe(`PowerSync Integration`, () => {
     it(`should initialize and fetch initial data`, async () => {
       const db = await createDatabase()
       await createTestData(db)
-
-      const collection = createCollection(
-        powerSyncCollectionOptions<Document>({
-          database: db,
-          tableName: `documents`,
-        })
-      )
-      onTestFinished(() => collection.cleanup())
+      const collection = createDocumentsCollection(db)
 
       await collection.stateWhenReady()
 
@@ -127,13 +125,7 @@ describe(`PowerSync Integration`, () => {
       const db = await createDatabase()
       await createTestData(db)
 
-      const collection = createCollection(
-        powerSyncCollectionOptions<Document>({
-          database: db,
-          tableName: `documents`,
-        })
-      )
-      onTestFinished(() => collection.cleanup())
+      const collection = createDocumentsCollection(db)
 
       await collection.stateWhenReady()
 
@@ -203,14 +195,7 @@ describe(`PowerSync Integration`, () => {
       const db = await createDatabase()
       await createTestData(db)
 
-      const collection = createCollection(
-        powerSyncCollectionOptions<Document>({
-          database: db,
-          tableName: `documents`,
-        })
-      )
-      onTestFinished(() => collection.cleanup())
-
+      const collection = createDocumentsCollection(db)
       await collection.stateWhenReady()
 
       // Verify the collection state contains our items
@@ -263,14 +248,7 @@ describe(`PowerSync Integration`, () => {
       const db = await createDatabase()
       await createTestData(db)
 
-      const collection = createCollection(
-        powerSyncCollectionOptions<Document>({
-          database: db,
-          tableName: `documents`,
-        })
-      )
-      onTestFinished(() => collection.cleanup())
-
+      const collection = createDocumentsCollection(db)
       await collection.stateWhenReady()
 
       expect(collection.size).toBe(3)
@@ -319,18 +297,12 @@ describe(`PowerSync Integration`, () => {
       const db = await createDatabase()
       await createTestData(db)
 
-      const documentsCollection = createCollection(
-        powerSyncCollectionOptions<Document>({
-          database: db,
-          tableName: `documents`,
-        })
-      )
-      onTestFinished(() => documentsCollection.cleanup())
+      const documentsCollection = createDocumentsCollection(db)
 
       const usersCollection = createCollection(
-        powerSyncCollectionOptions<User>({
+        powerSyncCollectionOptions({
           database: db,
-          tableName: `users`,
+          table: APP_SCHEMA.props.users,
         })
       )
       onTestFinished(() => usersCollection.cleanup())
@@ -388,15 +360,20 @@ describe(`PowerSync Integration`, () => {
     it(`should rollback transactions on error`, async () => {
       const db = await createDatabase()
 
-      // Create two collections for the same table
-      const collection = createCollection(
-        powerSyncCollectionOptions<Document>({
-          database: db,
-          tableName: `documents`,
-        })
-      )
-      onTestFinished(() => collection.cleanup())
+      const options = powerSyncCollectionOptions({
+        database: db,
+        table: APP_SCHEMA.props.documents,
+      })
 
+      // This will cause the transactor to fail when writing to SQLite
+      vi.spyOn(options.utils, `getMeta`).mockImplementation(() => ({
+        tableName: `fakeTable`,
+        trackedTableName: `error`,
+      }))
+      // Create two collections for the same table
+      const collection = createCollection(options)
+
+      onTestFinished(() => collection.cleanup())
       const addTx = createTransaction({
         autoCommit: false,
         mutationFn: async ({ transaction }) => {
@@ -407,19 +384,18 @@ describe(`PowerSync Integration`, () => {
       })
 
       expect(collection.size).eq(0)
+      await collection.stateWhenReady()
+
       const id = randomUUID()
-      // Attempt to insert invalid data
-      // We can only do this since we aren't using schema validation here
       addTx.mutate(() => {
         collection.insert({
           id,
-          name: new Error() as unknown as string, // This will cause a SQL error eventually
+          name: `aname`,
         })
       })
 
-      // This should be present in the optimisic state, but should be reverted when attempting to persist
+      // This should be present in the optimistic state, but should be reverted when attempting to persist
       expect(collection.size).eq(1)
-      expect((collection.get(id)?.name as any) instanceof Error).true
 
       try {
         await addTx.commit()
@@ -436,13 +412,7 @@ describe(`PowerSync Integration`, () => {
       const db = await createDatabase()
 
       // Create two collections for the same table
-      const collection = createCollection(
-        powerSyncCollectionOptions<Document>({
-          database: db,
-          tableName: `documents`,
-        })
-      )
-      onTestFinished(() => collection.cleanup())
+      const collection = createDocumentsCollection(db)
 
       await collection.stateWhenReady()
 
@@ -493,22 +463,10 @@ describe(`PowerSync Integration`, () => {
       const db = await createDatabase()
 
       // Create two collections for the same table
-      const collectionA = createCollection(
-        powerSyncCollectionOptions<Document>({
-          database: db,
-          tableName: `documents`,
-        })
-      )
-      onTestFinished(() => collectionA.cleanup())
+      const collectionA = createDocumentsCollection(db)
       await collectionA.stateWhenReady()
 
-      const collectionB = createCollection(
-        powerSyncCollectionOptions<Document>({
-          database: db,
-          tableName: `documents`,
-        })
-      )
-      onTestFinished(() => collectionB.cleanup())
+      const collectionB = createDocumentsCollection(db)
       await collectionB.stateWhenReady()
 
       await createTestData(db)
@@ -527,9 +485,9 @@ describe(`PowerSync Integration`, () => {
   describe(`Lifecycle`, async () => {
     it(`should cleanup resources`, async () => {
       const db = await createDatabase()
-      const collectionOptions = powerSyncCollectionOptions<Document>({
+      const collectionOptions = powerSyncCollectionOptions({
         database: db,
-        tableName: `documents`,
+        table: APP_SCHEMA.props.documents,
       })
 
       const meta = collectionOptions.utils.getMeta()

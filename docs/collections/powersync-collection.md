@@ -85,21 +85,25 @@ db.connect(new Connector())
 
 There are two ways to create a collection: using type inference or using schema validation.
 
-#### Option 1: Using Type Inference
+#### Option 1: Using Table Type Inference
+
+The collection types are automatically inferred from the PowerSync Schema Table definition. The table is used to construct a default StandardSchema validator which is used internally to validate collection data and operations.
 
 ```ts
 import { createCollection } from "@tanstack/react-db"
 import { powerSyncCollectionOptions } from "@tanstack/powersync-db-collection"
 
 const documentsCollection = createCollection(
-  powerSyncCollectionOptions<Document>({
+  powerSyncCollectionOptions({
     database: db,
-    tableName: "documents",
+    table: APP_SCHEMA.props.documents,
   })
 )
 ```
 
 #### Option 2: Using Schema Validation
+
+TODO
 
 ```ts
 import { createCollection } from "@tanstack/react-db"

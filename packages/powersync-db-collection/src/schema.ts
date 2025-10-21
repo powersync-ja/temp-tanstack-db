@@ -1,32 +1,7 @@
 import { ColumnType } from "@powersync/common"
-import type {
-  ColumnsType,
-  ExtractColumnValueType,
-  Schema,
-  Table,
-} from "@powersync/common"
+import type { ColumnsType, Schema, Table } from "@powersync/common"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
-
-/**
- * Utility type that extracts the typed structure of a table based on its column definitions.
- * Maps each column to its corresponding TypeScript type using ExtractColumnValueType.
- *
- * @template Columns - The ColumnsType definition containing column configurations
- * @example
- * ```typescript
- * const table = new Table({
- *   name: column.text,
- *   age: column.integer
- * })
- * type TableType = ExtractedTable<typeof table.columnMap>
- * // Results in: { name: string | null, age: number | null }
- * ```
- */
-type ExtractedTable<Columns extends ColumnsType> = {
-  [K in keyof Columns]: ExtractColumnValueType<Columns[K]>
-} & {
-  id: string
-}
+import type { ExtractedTable } from "./helpers"
 
 /**
  * Converts a PowerSync Table instance to a StandardSchemaV1 schema.

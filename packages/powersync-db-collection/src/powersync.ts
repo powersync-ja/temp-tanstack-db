@@ -3,19 +3,17 @@ import { DEFAULT_BATCH_SIZE } from "./definitions"
 import { asPowerSyncRecord, mapOperation } from "./helpers"
 import { PendingOperationStore } from "./PendingOperationStore"
 import { PowerSyncTransactor } from "./PowerSyncTransactor"
-import type { TriggerDiffRecord } from "@powersync/common"
-import type { StandardSchemaV1 } from "@standard-schema/spec"
-import type {
-  CollectionConfig,
-  InferSchemaOutput,
-  SyncConfig,
-} from "@tanstack/db"
+import { convertTableToSchema } from "./schema"
+import type { ExtractedTable } from "./helpers"
+import type { PendingOperation } from "./PendingOperationStore"
 import type {
   EnhancedPowerSyncCollectionConfig,
   PowerSyncCollectionConfig,
   PowerSyncCollectionUtils,
 } from "./definitions"
-import type { PendingOperation } from "./PendingOperationStore"
+import type { CollectionConfig, SyncConfig } from "@tanstack/db"
+import type { StandardSchemaV1 } from "@standard-schema/spec"
+import type { ColumnsType, Table, TriggerDiffRecord } from "@powersync/common"
 
 /**
  * Creates PowerSync collection options for use with a standard Collection
@@ -42,18 +40,19 @@ import type { PendingOperation } from "./PendingOperationStore"
  * const collection = createCollection(
  *   powerSyncCollectionOptions({
  *     database: db,
- *     tableName: "documents",
- *     schema: APP_SCHEMA,
+ *     table: APP_SCHEMA.props.documents,
+ *     schema: TODO
  *   })
  * )
  * ```
  */
-export function powerSyncCollectionOptions<T extends StandardSchemaV1>(
-  config: PowerSyncCollectionConfig<InferSchemaOutput<T>, T>
-): CollectionConfig<InferSchemaOutput<T>, string, T> & {
-  schema: T
-  utils: PowerSyncCollectionUtils
-}
+// TODO!!!
+// export function powerSyncCollectionOptions<T extends StandardSchemaV1>(
+//   config: PowerSyncCollectionConfig<InferSchemaOutput<T>, T>
+// ): CollectionConfig<InferSchemaOutput<T>, string, T> & {
+//   schema: T
+//   utils: PowerSyncCollectionUtils
+// }
 
 /**
  * Creates a PowerSync collection configuration without schema validation.
@@ -76,18 +75,20 @@ export function powerSyncCollectionOptions<T extends StandardSchemaV1>(
  * })
  *
  * const collection = createCollection(
- *   powerSyncCollectionOptions<Document>({
+ *   powerSyncCollectionOptions({
  *     database: db,
- *     tableName: "documents",
+ *     table: APP_SCHEMA.props.documents
  *   })
  * )
  * ```
  */
-export function powerSyncCollectionOptions<T extends object>(
-  config: PowerSyncCollectionConfig<T> & {
+export function powerSyncCollectionOptions<
+  TableType extends Table<ColumnsType> = Table<ColumnsType>,
+>(
+  config: PowerSyncCollectionConfig<TableType> & {
     schema?: never
   }
-): CollectionConfig<T, string> & {
+): CollectionConfig<ExtractedTable<TableType[`columnMap`]>, string> & {
   schema?: never
   utils: PowerSyncCollectionUtils
 }
@@ -96,18 +97,24 @@ export function powerSyncCollectionOptions<T extends object>(
  * Implementation of powerSyncCollectionOptions that handles both schema and non-schema configurations.
  */
 export function powerSyncCollectionOptions<
-  T extends object = Record<string, unknown>,
+  TableType extends Table<ColumnsType> = Table<ColumnsType>,
   TSchema extends StandardSchemaV1 = never,
 >(
-  config: PowerSyncCollectionConfig<T, TSchema>
-): EnhancedPowerSyncCollectionConfig<T, TSchema> {
+  config: PowerSyncCollectionConfig<TableType, TSchema>
+): EnhancedPowerSyncCollectionConfig<TableType, TSchema> {
   const {
     database,
-    tableName,
+    table,
+    schema: inputSchema,
     syncBatchSize = DEFAULT_BATCH_SIZE,
     ...restConfig
   } = config
 
+  type RecordType = ExtractedTable<TableType[`columnMap`]>
+  const { viewName } = table
+
+  // We can do basic runtime validations for columns if not explicit schema has been provided
+  const schema = inputSchema ?? (convertTableToSchema(table) as TSchema)
   /**
    * The onInsert, onUpdate, onDelete handlers should only return
    * after we have written the changes to Tanstack DB.
@@ -120,13 +127,13 @@ export function powerSyncCollectionOptions<
    */
   const pendingOperationStore = PendingOperationStore.GLOBAL
   // Keep the tracked table unique in case of multiple tabs.
-  const trackedTableName = `__${tableName}_tracking_${Math.floor(
+  const trackedTableName = `__${viewName}_tracking_${Math.floor(
     Math.random() * 0xffffffff
   )
     .toString(16)
     .padStart(8, `0`)}`
 
-  const transactor = new PowerSyncTransactor<T>({
+  const transactor = new PowerSyncTransactor<RecordType>({
     database,
   })
 
@@ -135,7 +142,7 @@ export function powerSyncCollectionOptions<
    * Notice that this describes the Sync between the local SQLite table
    * and the in-memory tanstack-db collection.
    */
-  const sync: SyncConfig<T, string> = {
+  const sync: SyncConfig<RecordType, string> = {
     sync: (params) => {
       const { begin, write, commit, markReady } = params
       const abortController = new AbortController()
@@ -143,7 +150,7 @@ export function powerSyncCollectionOptions<
       // The sync function needs to be synchronous
       async function start() {
         database.logger.info(
-          `Sync is starting for ${tableName} into ${trackedTableName}`
+          `Sync is starting for ${viewName} into ${trackedTableName}`
         )
         database.onChangeWithCallback(
           {
@@ -175,7 +182,7 @@ export function powerSyncCollectionOptions<
                       id,
                       operation,
                       timestamp,
-                      tableName,
+                      tableName: viewName,
                     })
                   }
 
@@ -201,7 +208,7 @@ export function powerSyncCollectionOptions<
         )
 
         const disposeTracking = await database.triggers.createDiffTrigger({
-          source: tableName,
+          source: viewName,
           destination: trackedTableName,
           when: {
             [DiffTriggerOperation.INSERT]: `TRUE`,
@@ -214,8 +221,8 @@ export function powerSyncCollectionOptions<
               let cursor = 0
               while (currentBatchCount == syncBatchSize) {
                 begin()
-                const batchItems = await context.getAll<T>(
-                  sanitizeSQL`SELECT * FROM ${tableName} LIMIT ? OFFSET ?`,
+                const batchItems = await context.getAll<RecordType>(
+                  sanitizeSQL`SELECT * FROM ${viewName} LIMIT ? OFFSET ?`,
                   [syncBatchSize, cursor]
                 )
                 currentBatchCount = batchItems.length
@@ -230,7 +237,7 @@ export function powerSyncCollectionOptions<
               }
               markReady()
               database.logger.info(
-                `Sync is ready for ${tableName} into ${trackedTableName}`
+                `Sync is ready for ${viewName} into ${trackedTableName}`
               )
             },
           },
@@ -252,14 +259,14 @@ export function powerSyncCollectionOptions<
 
       start().catch((error) =>
         database.logger.error(
-          `Could not start syncing process for ${tableName} into ${trackedTableName}`,
+          `Could not start syncing process for ${viewName} into ${trackedTableName}`,
           error
         )
       )
 
       return () => {
         database.logger.info(
-          `Sync has been stopped for ${tableName} into ${trackedTableName}`
+          `Sync has been stopped for ${viewName} into ${trackedTableName}`
         )
         abortController.abort()
       }
@@ -268,16 +275,18 @@ export function powerSyncCollectionOptions<
     getSyncMetadata: undefined,
   }
 
-  const getKey = (record: T) => asPowerSyncRecord(record).id
+  const getKey = (record: RecordType) => asPowerSyncRecord(record).id
 
-  const outputConfig: EnhancedPowerSyncCollectionConfig<T, TSchema> = {
+  const outputConfig: EnhancedPowerSyncCollectionConfig<TableType, TSchema> = {
     ...restConfig,
+    schema,
     getKey,
     // Syncing should start immediately since we need to monitor the changes for mutations
     startSync: true,
     sync,
     onInsert: async (params) => {
       // The transaction here should only ever contain a single insert mutation
+      params.transaction
       return await transactor.applyTransaction(params.transaction)
     },
     onUpdate: async (params) => {
@@ -290,7 +299,7 @@ export function powerSyncCollectionOptions<
     },
     utils: {
       getMeta: () => ({
-        tableName,
+        tableName: viewName,
         trackedTableName,
       }),
     },

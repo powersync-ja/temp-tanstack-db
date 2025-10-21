@@ -1,4 +1,9 @@
-import type { AbstractPowerSyncDatabase } from "@powersync/common"
+import type { ExtractedTable } from "./helpers"
+import type {
+  AbstractPowerSyncDatabase,
+  ColumnsType,
+  Table,
+} from "@powersync/common"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
 import type { BaseCollectionConfig, CollectionConfig } from "@tanstack/db"
 
@@ -36,14 +41,14 @@ import type { BaseCollectionConfig, CollectionConfig } from "@tanstack/db"
  * ```
  */
 export type PowerSyncCollectionConfig<
-  T extends object = Record<string, unknown>,
+  TableType extends Table<ColumnsType> = Table<ColumnsType>,
   TSchema extends StandardSchemaV1 = never,
 > = Omit<
-  BaseCollectionConfig<T, string, TSchema>,
+  BaseCollectionConfig<ExtractedTable<TableType[`columnMap`]>, string, TSchema>,
   `onInsert` | `onUpdate` | `onDelete` | `getKey`
 > & {
-  /** The name of the table in PowerSync database */
-  tableName: string
+  /** The PowerSync Schema Table definition */
+  table: TableType
   /** The PowerSync database instance */
   database: AbstractPowerSyncDatabase
   /**
@@ -73,9 +78,13 @@ export type PowerSyncCollectionMeta = {
 }
 
 export type EnhancedPowerSyncCollectionConfig<
-  T extends object = Record<string, unknown>,
+  TableType extends Table<any> = Table<any>,
   TSchema extends StandardSchemaV1 = never,
-> = CollectionConfig<T, string, TSchema> & {
+> = CollectionConfig<
+  ExtractedTable<TableType[`columnMap`]>,
+  string,
+  TSchema
+> & {
   id?: string
   utils: PowerSyncCollectionUtils
   schema?: TSchema
