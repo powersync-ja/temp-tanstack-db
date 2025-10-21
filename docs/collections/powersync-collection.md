@@ -156,8 +156,8 @@ The `powerSyncCollectionOptions` function accepts the following options:
 ```ts
 interface PowerSyncCollectionConfig<T> {
   database: PowerSyncDatabase // PowerSync database instance
-  tableName: string // Name of the table in PowerSync
-  schema?: Schema // Optional schema for validation
+  table: Table // PowerSync schema table definition
+  schema?: Schema // Optional schema for additional validation
 }
 ```
 
