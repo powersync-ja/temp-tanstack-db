@@ -96,7 +96,6 @@ describe(`PowerSync Integration`, () => {
       // should validate inputs
       try {
         collection.insert({} as any)
-        console.log(`failed`)
       } catch (ex) {
         expect(ex instanceof SchemaValidationError).true
         if (ex instanceof SchemaValidationError) {
@@ -136,7 +135,6 @@ describe(`PowerSync Integration`, () => {
       } catch (ex) {
         expect(ex instanceof SchemaValidationError).true
         if (ex instanceof SchemaValidationError) {
-          console.log(ex)
           expect(ex.message).contains(errorMessage)
         }
       }
@@ -151,11 +149,9 @@ describe(`PowerSync Integration`, () => {
       // should validate inputs
       try {
         collection.insert({} as any)
-        console.log(`failed`)
       } catch (ex) {
         expect(ex instanceof SchemaValidationError).true
         if (ex instanceof SchemaValidationError) {
-          console.log(ex)
           expect(ex.message).contains(`Required - path: id`)
         }
       }
