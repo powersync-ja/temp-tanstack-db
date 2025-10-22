@@ -1,0 +1,99 @@
+import type { AbstractPowerSyncDatabase, Table } from "@powersync/common"
+import type { StandardSchemaV1 } from "@standard-schema/spec"
+import type { BaseCollectionConfig, CollectionConfig } from "@tanstack/db"
+import type { ExtractedTable } from "./helpers"
+
+/**
+ * Configuration interface for PowerSync collection options.
+ * @template TTable - The PowerSync table schema definition
+ * @template TSchema - The validation schema type
+ */
+/**
+ * Configuration options for creating a PowerSync collection.
+ *
+ * @example
+ * ```typescript
+ * const APP_SCHEMA = new Schema({
+ *   documents: new Table({
+ *     name: column.text,
+ *   }),
+ * })
+ *
+ * const db = new PowerSyncDatabase({
+ *   database: {
+ *     dbFilename: "test.sqlite",
+ *   },
+ *   schema: APP_SCHEMA,
+ * })
+ *
+ * const collection = createCollection(
+ *   powerSyncCollectionOptions({
+ *     database: db,
+ *     table: APP_SCHEMA.props.documents
+ *   })
+ * )
+ * ```
+ */
+export type PowerSyncCollectionConfig<
+  TTable extends Table = Table,
+  TSchema extends StandardSchemaV1 = never,
+> = Omit<
+  BaseCollectionConfig<ExtractedTable<TTable>, string, TSchema>,
+  `onInsert` | `onUpdate` | `onDelete` | `getKey`
+> & {
+  /** The PowerSync schema Table definition */
+  table: TTable
+  /** The PowerSync database instance */
+  database: AbstractPowerSyncDatabase
+  /**
+   * The maximum number of documents to read from the SQLite table
+   * in a single batch during the initial sync between PowerSync and the
+   * in-memory TanStack DB collection.
+   *
+   * @remarks
+   * - Defaults to {@link DEFAULT_BATCH_SIZE} if not specified.
+   * - Larger values reduce the number of round trips to the storage
+   *   engine but increase memory usage per batch.
+   * - Smaller values may lower memory usage and allow earlier
+   *   streaming of initial results, at the cost of more query calls.
+   */
+  syncBatchSize?: number
+}
+
+/**
+ * Metadata for the PowerSync Collection.
+ */
+export type PowerSyncCollectionMeta = {
+  /**
+   * The SQLite table representing the collection.
+   */
+  tableName: string
+  /**
+   * The internal table used to track diffs for the collection.
+   */
+  trackedTableName: string
+}
+
+/**
+ * A CollectionConfig which includes utilities for PowerSync.
+ */
+export type EnhancedPowerSyncCollectionConfig<
+  TTable extends Table = Table,
+  TSchema extends StandardSchemaV1 = never,
+> = CollectionConfig<ExtractedTable<TTable>, string, TSchema> & {
+  id?: string
+  utils: PowerSyncCollectionUtils
+  schema?: TSchema
+}
+
+/**
+ * Collection-level utilities for PowerSync.
+ */
+export type PowerSyncCollectionUtils = {
+  getMeta: () => PowerSyncCollectionMeta
+}
+
+/**
+ * Default value for {@link PowerSyncCollectionConfig#syncBatchSize}.
+ */
+export const DEFAULT_BATCH_SIZE = 1000
