@@ -6,7 +6,11 @@ import { PowerSyncTransactor } from "./PowerSyncTransactor"
 import { convertTableToSchema } from "./schema"
 import type { Table, TriggerDiffRecord } from "@powersync/common"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
-import type { CollectionConfig, SyncConfig } from "@tanstack/db"
+import type {
+  CollectionConfig,
+  InferSchemaOutput,
+  SyncConfig,
+} from "@tanstack/db"
 import type {
   EnhancedPowerSyncCollectionConfig,
   PowerSyncCollectionConfig,
@@ -91,13 +95,10 @@ export function powerSyncCollectionOptions<TTable extends Table = Table>(
  */
 export function powerSyncCollectionOptions<
   TTable extends Table,
-  TSchema extends StandardSchemaV1<
-    ExtractedTable<TTable>,
-    ExtractedTable<TTable>
-  >,
+  TSchema extends StandardSchemaV1<any, ExtractedTable<TTable>>,
 >(
   config: PowerSyncCollectionConfig<TTable, TSchema>
-): CollectionConfig<ExtractedTable<TTable>, string, TSchema> & {
+): CollectionConfig<InferSchemaOutput<TSchema>, string, TSchema> & {
   utils: PowerSyncCollectionUtils
   schema: TSchema
 }

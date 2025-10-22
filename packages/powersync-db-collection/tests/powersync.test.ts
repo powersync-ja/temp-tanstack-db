@@ -156,6 +156,35 @@ describe(`PowerSync Integration`, () => {
         }
       }
     })
+
+    it(`should allow custom input types`, async () => {
+      const db = await createDatabase()
+
+      // The input can be arbitrarily typed, as long as it converts to SQLite
+      const schema = z.object({
+        id: z.string(),
+        name: z.number().transform((val) => `Number: ${val}`),
+      })
+
+      const collection = createCollection(
+        powerSyncCollectionOptions({
+          database: db,
+          table: APP_SCHEMA.props.documents,
+          schema,
+        })
+      )
+      onTestFinished(() => collection.cleanup())
+
+      const id = randomUUID()
+      collection.insert({
+        id,
+        name: 42,
+      })
+
+      const item = collection.get(id)
+
+      expect(item?.name).eq(`Number: 42`)
+    })
   })
 
   describe(`sync`, () => {

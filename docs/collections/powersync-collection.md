@@ -101,7 +101,7 @@ const documentsCollection = createCollection(
 
 #### Option 2: Using Advanced Schema Validation
 
-Additional validations can be performed by supplying a compatible validation schema (such as a Zod schema). The typing of the validator is constrained to match the typing of the SQLite table.
+Additional validations can be performed by supplying a compatible validation schema (such as a Zod schema). The output typing of the validator is constrained to match the typing of the SQLite table. The input typing can be arbitrary.
 
 ```ts
 import { createCollection } from "@tanstack/react-db"
@@ -111,10 +111,7 @@ import { z } from "zod"
 // The output of this schema must match the SQLite schema
 const schema = z.object({
   id: z.string(),
-  name: z
-    .string()
-    .min(3, { message: "Should be at least 3 characters" })
-    .nullable(),
+  name: z.string().min(3, { message: "Should be at least 3 characters" }),
 })
 
 const documentsCollection = createCollection(
