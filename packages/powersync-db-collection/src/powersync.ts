@@ -91,7 +91,10 @@ export function powerSyncCollectionOptions<TTable extends Table = Table>(
  */
 export function powerSyncCollectionOptions<
   TTable extends Table,
-  TSchema extends StandardSchemaV1<ExtractedTable<TTable>, any>,
+  TSchema extends StandardSchemaV1<
+    ExtractedTable<TTable>,
+    ExtractedTable<TTable>
+  >,
 >(
   config: PowerSyncCollectionConfig<TTable, TSchema>
 ): CollectionConfig<ExtractedTable<TTable>, string, TSchema> & {
