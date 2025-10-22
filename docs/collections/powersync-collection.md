@@ -85,7 +85,7 @@ There are two ways to create a collection: using type inference or using schema 
 
 #### Option 1: Using Table Type Inference
 
-The collection types are automatically inferred from the PowerSync Schema Table definition. The table is used to construct a default StandardSchema validator which is used internally to validate collection operations.
+The collection types are automatically inferred from the PowerSync schema table definition. The table is used to construct a default standard schema validator which is used internally to validate collection operations.
 
 ```ts
 import { createCollection } from "@tanstack/react-db"
@@ -101,20 +101,20 @@ const documentsCollection = createCollection(
 
 #### Option 2: Using Advanced Schema Validation
 
-Additional validations can be performed by supplying a Standard Schema. The typing of the validator is constrained to match the typing of the SQLite table.
+Additional validations can be performed by supplying a compatible validation schema (such as a Zod schema). The typing of the validator is constrained to match the typing of the SQLite table.
 
 ```ts
 import { createCollection } from "@tanstack/react-db"
-import {
-  powerSyncCollectionOptions,
-  convertPowerSyncSchemaToSpecs,
-} from "@tanstack/powersync-db-collection"
+import { powerSyncCollectionOptions } from "@tanstack/powersync-db-collection"
 import { z } from "zod"
 
-// The output of this schema must correspond to the SQLite schema
+// The output of this schema must match the SQLite schema
 const schema = z.object({
   id: z.string(),
-  name: z.string().min(3, { message: errorMessage }).nullable(),
+  name: z
+    .string()
+    .min(3, { message: "Should be at least 3 characters" })
+    .nullable(),
 })
 
 const documentsCollection = createCollection(
@@ -153,7 +153,7 @@ The `powerSyncCollectionOptions` function accepts the following options:
 interface PowerSyncCollectionConfig<T> {
   database: PowerSyncDatabase // PowerSync database instance
   table: Table // PowerSync schema table definition
-  schema?: Schema // Optional schema for additional validation
+  schema?: StandardSchemaV1 // Optional schema for additional validation (e.g., Zod schema)
 }
 ```
 
