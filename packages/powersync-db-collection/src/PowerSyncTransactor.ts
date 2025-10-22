@@ -2,10 +2,10 @@ import { sanitizeSQL } from "@powersync/common"
 import DebugModule from "debug"
 import { PendingOperationStore } from "./PendingOperationStore"
 import { asPowerSyncRecord, mapOperationToPowerSync } from "./helpers"
-import type { AbstractPowerSyncDatabase, LockContext } from "@powersync/common"
-import type { PendingMutation, Transaction } from "@tanstack/db"
-import type { PendingOperation } from "./PendingOperationStore"
 import type { EnhancedPowerSyncCollectionConfig } from "./definitions"
+import type { PendingOperation } from "./PendingOperationStore"
+import type { PendingMutation, Transaction } from "@tanstack/db"
+import type { AbstractPowerSyncDatabase, LockContext } from "@powersync/common"
 
 const debug = DebugModule.debug(`ts/db:powersync`)
 
@@ -24,7 +24,7 @@ export type TransactorOptions = {
  * const collection = createCollection(
  *   powerSyncCollectionOptions<Document>({
  *     database: db,
- *     tableName: "documents",
+ *     table: APP_SCHEMA.props.documents,
  *   })
  * )
  *
@@ -239,14 +239,16 @@ export class PowerSyncTransactor<T extends object = Record<string, unknown>> {
     waitForCompletion: boolean,
     handler: (tableName: string, mutation: PendingMutation<T>) => Promise<void>
   ): Promise<PendingOperation | null> {
-    const { tableName, trackedTableName } = (
-      mutation.collection.config as EnhancedPowerSyncCollectionConfig
-    ).utils.getMeta()
-
-    if (!tableName) {
+    if (
+      typeof (mutation.collection.config as any).utils?.getMeta != `function`
+    ) {
       throw new Error(`Could not get tableName from mutation's collection config.
         The provided mutation might not have originated from PowerSync.`)
     }
+
+    const { tableName, trackedTableName } = (
+      mutation.collection.config as unknown as EnhancedPowerSyncCollectionConfig
+    ).utils.getMeta()
 
     await handler(sanitizeSQL`${tableName}`, mutation)
 

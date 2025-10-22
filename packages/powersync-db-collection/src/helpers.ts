@@ -10,10 +10,22 @@ export type PowerSyncRecord = {
 }
 
 /**
+ * Utility type: If T includes null, add undefined.
+ * PowerSync records typically are typed as `string | null`, where insert
+ * and update operations also allow not specifying a value at all (optional)
+ *  */
+type WithUndefinedIfNull<T> = null extends T ? T | undefined : T
+type OptionalIfUndefined<T> = {
+  [K in keyof T as undefined extends T[K] ? K : never]?: T[K]
+} & {
+  [K in keyof T as undefined extends T[K] ? never : K]: T[K]
+}
+
+/**
  * Utility type that extracts the typed structure of a table based on its column definitions.
  * Maps each column to its corresponding TypeScript type using ExtractColumnValueType.
  *
- * @template Columns - The ColumnsType definition containing column configurations
+ * @template TTable - The PowerSync table definition
  * @example
  * ```typescript
  * const table = new Table({
@@ -24,11 +36,11 @@ export type PowerSyncRecord = {
  * // Results in: { name: string | null, age: number | null }
  * ```
  */
-export type ExtractedTable<TTable extends Table> = {
-  [K in keyof TTable[`columnMap`]]: ExtractColumnValueType<
-    TTable[`columnMap`][K]
+export type ExtractedTable<TTable extends Table> = OptionalIfUndefined<{
+  [K in keyof TTable[`columnMap`]]: WithUndefinedIfNull<
+    ExtractColumnValueType<TTable[`columnMap`][K]>
   >
-} & {
+}> & {
   id: string
 }
 

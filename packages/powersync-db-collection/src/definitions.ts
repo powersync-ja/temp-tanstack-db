@@ -5,7 +5,7 @@ import type { ExtractedTable } from "./helpers"
 
 /**
  * Configuration interface for PowerSync collection options
- * @template T - The type of items in the collection
+ * @template TTable - The PowerSync table schema definition
  * @template TSchema - The schema type for validation
  */
 /**
@@ -19,8 +19,6 @@ import type { ExtractedTable } from "./helpers"
  *   }),
  * })
  *
- * type Document = (typeof APP_SCHEMA)["types"]["documents"]
- *
  * const db = new PowerSyncDatabase({
  *   database: {
  *     dbFilename: "test.sqlite",
@@ -29,9 +27,9 @@ import type { ExtractedTable } from "./helpers"
  * })
  *
  * const collection = createCollection(
- *   powerSyncCollectionOptions<Document>({
+ *   powerSyncCollectionOptions({
  *     database: db,
- *     tableName: "documents",
+ *     table: APP_SCHEMA.props.documents
  *   })
  * )
  * ```
@@ -62,6 +60,9 @@ export type PowerSyncCollectionConfig<
   syncBatchSize?: number
 }
 
+/**
+ * Meta data for the PowerSync Collection
+ */
 export type PowerSyncCollectionMeta = {
   /**
    * The SQLite table representing the collection.
@@ -73,6 +74,9 @@ export type PowerSyncCollectionMeta = {
   trackedTableName: string
 }
 
+/**
+ * A CollectionConfig which includes utilities for PowerSync
+ */
 export type EnhancedPowerSyncCollectionConfig<
   TTable extends Table = Table,
   TSchema extends StandardSchemaV1 = never,
@@ -82,6 +86,9 @@ export type EnhancedPowerSyncCollectionConfig<
   schema?: TSchema
 }
 
+/**
+ * Collection level utilities for PowerSync
+ */
 export type PowerSyncCollectionUtils = {
   getMeta: () => PowerSyncCollectionMeta
 }

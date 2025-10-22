@@ -44,8 +44,6 @@ const APP_SCHEMA = new Schema({
   }),
 })
 
-type Document = (typeof APP_SCHEMA)["types"]["documents"]
-
 // Initialize PowerSync database
 const db = new PowerSyncDatabase({
   database: {
@@ -87,7 +85,7 @@ There are two ways to create a collection: using type inference or using schema 
 
 #### Option 1: Using Table Type Inference
 
-The collection types are automatically inferred from the PowerSync Schema Table definition. The table is used to construct a default StandardSchema validator which is used internally to validate collection data and operations.
+The collection types are automatically inferred from the PowerSync Schema Table definition. The table is used to construct a default StandardSchema validator which is used internally to validate collection operations.
 
 ```ts
 import { createCollection } from "@tanstack/react-db"
@@ -103,7 +101,7 @@ const documentsCollection = createCollection(
 
 #### Option 2: Using Advanced Schema Validation
 
-Additional validations can be performed by supplying a Standard Schema.
+Additional validations can be performed by supplying a Standard Schema. The typing of the validator is constrained to match the typing of the SQLite table.
 
 ```ts
 import { createCollection } from "@tanstack/react-db"
@@ -127,8 +125,6 @@ const documentsCollection = createCollection(
   })
 )
 ```
-
-With schema validation, the collection will validate all inputs at runtime to ensure they match the PowerSync schema types. This provides an extra layer of type safety beyond TypeScript's compile-time checks.
 
 ## Features
 

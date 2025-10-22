@@ -27,6 +27,7 @@ const APP_SCHEMA = new Schema({
   documents: new Table(
     {
       name: column.text,
+      author: column.text,
     },
     { viewName: `documents` }
   ),
@@ -110,7 +111,11 @@ describe(`PowerSync Integration`, () => {
       const errorMessage = `Name must be at least 3 characters`
       const schema = z.object({
         id: z.string(),
-        name: z.string().min(3, { message: errorMessage }).nullable(),
+        name: z
+          .string()
+          .min(3, { message: errorMessage })
+          .nullable()
+          .optional(),
       })
 
       const collection = createCollection(
@@ -258,12 +263,14 @@ describe(`PowerSync Integration`, () => {
       const tx = collection.insert({
         id,
         name: `new`,
+        author: `somebody`,
       })
 
       // The insert should optimistically update the collection
       const newDoc = collection.get(id)
       expect(newDoc).toBeDefined()
       expect(newDoc!.name).toBe(`new`)
+      expect(newDoc!.author).toBe(`somebody`)
 
       await tx.isPersisted.promise
       // The item should now be present in PowerSync
@@ -276,6 +283,8 @@ describe(`PowerSync Integration`, () => {
       const updatedDoc = collection.get(id)
       expect(updatedDoc).toBeDefined()
       expect(updatedDoc!.name).toBe(`updatedNew`)
+      // Only the updated field should be updated
+      expect(updatedDoc!.author).toBe(`somebody`)
 
       await collection.delete(id).isPersisted.promise
 
@@ -511,7 +520,7 @@ describe(`PowerSync Integration`, () => {
     })
   })
 
-  describe(`Multiple Clients`, async () => {
+  describe(`Multiple Clients`, () => {
     it(`should sync updates between multiple clients`, async () => {
       const db = await createDatabase()
 
@@ -535,7 +544,7 @@ describe(`PowerSync Integration`, () => {
     })
   })
 
-  describe(`Lifecycle`, async () => {
+  describe(`Lifecycle`, () => {
     it(`should cleanup resources`, async () => {
       const db = await createDatabase()
       const collectionOptions = powerSyncCollectionOptions({

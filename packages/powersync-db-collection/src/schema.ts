@@ -1,5 +1,5 @@
 import { ColumnType } from "@powersync/common"
-import type { ColumnsType, Schema, Table } from "@powersync/common"
+import type { Table } from "@powersync/common"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
 import type { ExtractedTable } from "./helpers"
 
@@ -8,7 +8,7 @@ import type { ExtractedTable } from "./helpers"
  * Creates a schema that validates the structure and types of table records
  * according to the PowerSync table definition.
  *
- * @template Columns - The ColumnsType definition containing column configurations
+ * @template TTable - The PowerSync schema typed Table definition
  * @param table - The PowerSync Table instance to convert
  * @returns A StandardSchemaV1 compatible schema with proper type validation
  *
@@ -18,26 +18,17 @@ import type { ExtractedTable } from "./helpers"
  *   name: column.text,
  *   age: column.integer
  * })
- *
- * const schema = convertTableToSchema(usersTable)
- * // Now you can use this schema with powerSyncCollectionOptions
- * const collection = createCollection(
- *   powerSyncCollectionOptions({
- *     database: db,
- *     tableName: "users",
- *     schema: schema
- *   })
- * )
  * ```
  */
-export function convertTableToSchema<Columns extends ColumnsType>(
-  table: Table<Columns>
-): StandardSchemaV1<ExtractedTable<Columns>> {
+export function convertTableToSchema<TTable extends Table>(
+  table: TTable
+): StandardSchemaV1<ExtractedTable<TTable>> {
+  type TExtracted = ExtractedTable<TTable>
   // Create validate function that checks types according to column definitions
   const validate = (
     value: unknown
   ):
-    | StandardSchemaV1.SuccessResult<ExtractedTable<Columns>>
+    | StandardSchemaV1.SuccessResult<TExtracted>
     | StandardSchemaV1.FailureResult => {
     if (typeof value != `object` || value == null) {
       return {
@@ -61,7 +52,7 @@ export function convertTableToSchema<Columns extends ColumnsType>(
 
     // Check each column
     for (const column of table.columns) {
-      const val = (value as ExtractedTable<Columns>)[column.name]
+      const val = (value as TExtracted)[column.name as keyof TExtracted]
 
       if (val == null) {
         continue
@@ -92,7 +83,7 @@ export function convertTableToSchema<Columns extends ColumnsType>(
       return { issues }
     }
 
-    return { value: { ...value } as ExtractedTable<Columns> }
+    return { value: { ...value } as TExtracted }
   }
 
   return {
@@ -101,72 +92,9 @@ export function convertTableToSchema<Columns extends ColumnsType>(
       vendor: `powersync`,
       validate,
       types: {
-        input: {} as ExtractedTable<Columns>,
-        output: {} as ExtractedTable<Columns>,
+        input: {} as TExtracted,
+        output: {} as TExtracted,
       },
     },
   }
-}
-
-/**
- * Converts an entire PowerSync Schema (containing multiple tables) into a collection of StandardSchemaV1 schemas.
- * Each table in the schema is converted to its own StandardSchemaV1 schema while preserving all type information.
- *
- * @template Tables - A record type mapping table names to their Table definitions
- * @param schema - The PowerSync Schema containing multiple table definitions
- * @returns An object where each key is a table name and each value is that table's StandardSchemaV1 schema
- *
- * @example
- * ```typescript
- * const mySchema = new Schema({
- *   users: new Table({
- *     name: column.text,
- *     age: column.integer
- *   }),
- *   posts: new Table({
- *     title: column.text,
- *     views: column.integer
- *   })
- * })
- *
- * const standardizedSchemas = convertSchemaToSpecs(mySchema)
- * // Result has type:
- * // {
- * //   users: StandardSchemaV1<{ name: string | null, age: number | null }>,
- * //   posts: StandardSchemaV1<{ title: string | null, views: number | null }>
- * // }
- *
- * // Can be used with collections:
- * const usersCollection = createCollection(
- *   powerSyncCollectionOptions({
- *     database: db,
- *     tableName: "users",
- *     schema: standardizedSchemas.users
- *   })
- * )
- * ```
- */
-export function convertPowerSyncSchemaToSpecs<
-  Tables extends Record<string, Table<ColumnsType>>,
->(
-  schema: Schema<Tables>
-): {
-  [TableName in keyof Tables]: StandardSchemaV1<
-    ExtractedTable<Tables[TableName][`columnMap`]>
-  >
-} {
-  // Create a map to store the standardized schemas
-  const standardizedSchemas = {} as {
-    [TableName in keyof Tables]: StandardSchemaV1<
-      ExtractedTable<Tables[TableName][`columnMap`]>
-    >
-  }
-
-  // Iterate through each table in the schema
-  schema.tables.forEach((table) => {
-    // Convert each table to a StandardSchemaV1 and store it in the result map
-    ;(standardizedSchemas as any)[table.name] = convertTableToSchema(table)
-  })
-
-  return standardizedSchemas
 }
