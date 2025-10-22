@@ -4,9 +4,9 @@ import type { BaseCollectionConfig, CollectionConfig } from "@tanstack/db"
 import type { ExtractedTable } from "./helpers"
 
 /**
- * Configuration interface for PowerSync collection options
+ * Configuration interface for PowerSync collection options.
  * @template TTable - The PowerSync table schema definition
- * @template TSchema - The schema type for validation
+ * @template TSchema - The validation schema type
  */
 /**
  * Configuration options for creating a PowerSync collection.
@@ -41,7 +41,7 @@ export type PowerSyncCollectionConfig<
   BaseCollectionConfig<ExtractedTable<TTable>, string, TSchema>,
   `onInsert` | `onUpdate` | `onDelete` | `getKey`
 > & {
-  /** The PowerSync Schema Table definition */
+  /** The PowerSync schema Table definition */
   table: TTable
   /** The PowerSync database instance */
   database: AbstractPowerSyncDatabase
@@ -61,7 +61,7 @@ export type PowerSyncCollectionConfig<
 }
 
 /**
- * Meta data for the PowerSync Collection
+ * Metadata for the PowerSync Collection.
  */
 export type PowerSyncCollectionMeta = {
   /**
@@ -69,13 +69,13 @@ export type PowerSyncCollectionMeta = {
    */
   tableName: string
   /**
-   * The internal table used to track diff for the collection.
+   * The internal table used to track diffs for the collection.
    */
   trackedTableName: string
 }
 
 /**
- * A CollectionConfig which includes utilities for PowerSync
+ * A CollectionConfig which includes utilities for PowerSync.
  */
 export type EnhancedPowerSyncCollectionConfig<
   TTable extends Table = Table,
@@ -87,13 +87,13 @@ export type EnhancedPowerSyncCollectionConfig<
 }
 
 /**
- * Collection level utilities for PowerSync
+ * Collection-level utilities for PowerSync.
  */
 export type PowerSyncCollectionUtils = {
   getMeta: () => PowerSyncCollectionMeta
 }
 
 /**
- * Default value for {@link PowerSyncCollectionConfig#syncBatchSize}
+ * Default value for {@link PowerSyncCollectionConfig#syncBatchSize}.
  */
 export const DEFAULT_BATCH_SIZE = 1000

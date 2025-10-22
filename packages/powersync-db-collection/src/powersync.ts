@@ -16,10 +16,10 @@ import type { ExtractedTable } from "./helpers"
 import type { PendingOperation } from "./PendingOperationStore"
 
 /**
- * Creates PowerSync collection options for use with a standard Collection
+ * Creates PowerSync collection options for use with a standard Collection.
  *
- * @template TTable - The SQLite based typing
- * @template TSchema - The schema type for validation - optionally supports a custom input type
+ * @template TTable - The SQLite-based typing
+ * @template TSchema - The validation schema type (optionally supports a custom input type)
  * @param config - Configuration options for the PowerSync collection
  * @returns Collection options with utilities
  */
@@ -66,7 +66,7 @@ export function powerSyncCollectionOptions<TTable extends Table = Table>(
  * ```typescript
  * import { z } from "zod"
  *
- * // The PowerSync SQLite Schema
+ * // The PowerSync SQLite schema
  * const APP_SCHEMA = new Schema({
  *   documents: new Table({
  *     name: column.text,
@@ -76,8 +76,8 @@ export function powerSyncCollectionOptions<TTable extends Table = Table>(
  * // Advanced Zod validations. The output type of this schema
  * // is constrained to the SQLite schema of APP_SCHEMA
  * const schema = z.object({
- *    id: z.string(),
- *    name: z.string().min(3, { message: "Should be at least 3 characters" }).nullable(),
+ *   id: z.string(),
+ *   name: z.string().min(3, { message: "Should be at least 3 characters" }).nullable(),
  * })
  *
  * const collection = createCollection(
@@ -122,9 +122,9 @@ export function powerSyncCollectionOptions<
   // We can do basic runtime validations for columns if not explicit schema has been provided
   const schema = inputSchema ?? (convertTableToSchema(table) as TSchema)
   /**
-   * The onInsert, onUpdate, onDelete handlers should only return
-   * after we have written the changes to Tanstack DB.
-   * We currently only write to Tanstack DB from a diff trigger.
+   * The onInsert, onUpdate, and onDelete handlers should only return
+   * after we have written the changes to TanStack DB.
+   * We currently only write to TanStack DB from a diff trigger.
    * We wait for the diff trigger to observe the change,
    * and only then return from the on[X] handlers.
    * This ensures that when the transaction is reported as

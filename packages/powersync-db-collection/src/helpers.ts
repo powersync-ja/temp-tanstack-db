@@ -2,7 +2,7 @@ import { DiffTriggerOperation } from "@powersync/common"
 import type { ExtractColumnValueType, Table } from "@powersync/common"
 
 /**
- * All PowerSync table records have a uuid `id` column.
+ * All PowerSync table records include a UUID `id` column.
  */
 export type PowerSyncRecord = {
   id: string
@@ -10,10 +10,10 @@ export type PowerSyncRecord = {
 }
 
 /**
- * Utility type: If T includes null, add undefined.
- * PowerSync records typically are typed as `string | null`, where insert
- * and update operations also allow not specifying a value at all (optional)
- *  */
+ * Utility type: If T includes null, also allow undefined (to support optional fields in insert/update operations).
+ * PowerSync records are typically typed as `string | null`, where insert
+ * and update operations may also allow not specifying a value at all (optional).
+ */
 type WithUndefinedIfNull<T> = null extends T ? T | undefined : T
 type OptionalIfUndefined<T> = {
   [K in keyof T as undefined extends T[K] ? K : never]?: T[K]

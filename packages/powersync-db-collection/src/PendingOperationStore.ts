@@ -13,7 +13,7 @@ export type PendingOperation = {
  * Optimistic mutations have their optimistic state discarded once transactions have
  * been applied.
  * We need to ensure that an applied transaction has been observed by the sync diff trigger
- * before resoling the transaction application call.
+ * before resolving the transaction application call.
  * This store allows registering a wait for a pending operation to have been observed.
  */
 export class PendingOperationStore {

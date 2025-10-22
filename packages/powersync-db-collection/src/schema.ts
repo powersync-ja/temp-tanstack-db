@@ -8,9 +8,9 @@ import type { ExtractedTable } from "./helpers"
  * Creates a schema that validates the structure and types of table records
  * according to the PowerSync table definition.
  *
- * @template TTable - The PowerSync schema typed Table definition
+ * @template TTable - The PowerSync schema-typed Table definition
  * @param table - The PowerSync Table instance to convert
- * @returns A StandardSchemaV1 compatible schema with proper type validation
+ * @returns A StandardSchemaV1-compatible schema with proper type validation
  *
  * @example
  * ```typescript

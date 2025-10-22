@@ -1,11 +1,11 @@
 import { sanitizeSQL } from "@powersync/common"
 import DebugModule from "debug"
-import { PendingOperationStore } from "./PendingOperationStore"
 import { asPowerSyncRecord, mapOperationToPowerSync } from "./helpers"
+import { PendingOperationStore } from "./PendingOperationStore"
+import type { AbstractPowerSyncDatabase, LockContext } from "@powersync/common"
+import type { PendingMutation, Transaction } from "@tanstack/db"
 import type { EnhancedPowerSyncCollectionConfig } from "./definitions"
 import type { PendingOperation } from "./PendingOperationStore"
-import type { PendingMutation, Transaction } from "@tanstack/db"
-import type { AbstractPowerSyncDatabase, LockContext } from "@powersync/common"
 
 const debug = DebugModule.debug(`ts/db:powersync`)
 
@@ -29,16 +29,16 @@ export type TransactorOptions = {
  * )
  *
  * const addTx = createTransaction({
- *     autoCommit: false,
- *     mutationFn: async ({ transaction }) => {
- *         await new PowerSyncTransactor({database: db}).applyTransaction(transaction)
- *     },
+ *   autoCommit: false,
+ *   mutationFn: async ({ transaction }) => {
+ *     await new PowerSyncTransactor({ database: db }).applyTransaction(transaction)
+ *   },
  * })
  *
  * addTx.mutate(() => {
- *     for (let i = 0; i < 5; i++) {
- *        collection.insert({ id: randomUUID(), name: `tx-${i}` })
- *     }
+ *   for (let i = 0; i < 5; i++) {
+ *     collection.insert({ id: randomUUID(), name: `tx-${i}` })
+ *   }
  * })
  *
  * await addTx.commit()
@@ -58,7 +58,7 @@ export class PowerSyncTransactor<T extends object = Record<string, unknown>> {
   }
 
   /**
-   * Persists a {@link Transaction} to PowerSync's SQLite DB.
+   * Persists a {@link Transaction} to the PowerSync SQLite database.
    */
   async applyTransaction(transaction: Transaction<T>) {
     const { mutations } = transaction
@@ -67,8 +67,8 @@ export class PowerSyncTransactor<T extends object = Record<string, unknown>> {
       return
     }
     /**
-     * The transaction might contain ops for different collections.
-     * We can do some optimizations for single collection transactions.
+     * The transaction might contain operations for different collections.
+     * We can do some optimizations for single-collection transactions.
      */
     const mutationsCollectionIds = mutations.map(
       (mutation) => mutation.collection.id
@@ -103,7 +103,7 @@ export class PowerSyncTransactor<T extends object = Record<string, unknown>> {
         for (const [index, mutation] of mutations.entries()) {
           /**
            * Each collection processes events independently. We need to make sure the
-           * last operation for each collection has been seen.
+           * last operation for each collection has been observed.
            */
           const shouldWait =
             index == lastCollectionMutationIndexes.get(mutation.collection.id)
@@ -130,7 +130,7 @@ export class PowerSyncTransactor<T extends object = Record<string, unknown>> {
          * Return a promise from the writeTransaction, without awaiting it.
          * This promise will resolve once the entire transaction has been
          * observed via the diff triggers.
-         * We return without awaiting in order to free the writeLock.
+         * We return without awaiting in order to free the write lock.
          */
         return {
           whenComplete: Promise.all(
@@ -231,7 +231,7 @@ export class PowerSyncTransactor<T extends object = Record<string, unknown>> {
    * Helper function which wraps a persistence operation by:
    * - Fetching the mutation's collection's SQLite table details
    * - Executing the mutation
-   * - Returning the last pending diff op if required
+   * - Returning the last pending diff operation if required
    */
   protected async handleOperationWithCompletion(
     mutation: PendingMutation<T>,
