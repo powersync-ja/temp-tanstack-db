@@ -4,20 +4,29 @@ import { asPowerSyncRecord, mapOperation } from "./helpers"
 import { PendingOperationStore } from "./PendingOperationStore"
 import { PowerSyncTransactor } from "./PowerSyncTransactor"
 import { convertTableToSchema } from "./schema"
-import type { Table, TriggerDiffRecord } from "@powersync/common"
-import type { StandardSchemaV1 } from "@standard-schema/spec"
+import { serializeForSQLite } from "./serlization"
+import type { PendingOperation } from "./PendingOperationStore"
 import type {
-  CollectionConfig,
-  InferSchemaOutput,
-  SyncConfig,
-} from "@tanstack/db"
+  AnyTableColumnType,
+  ExtractedTable,
+  ExtractedTableColumns,
+  MapBaseColumnType,
+  OptionalExtractedTable,
+} from "./helpers"
 import type {
+  BasePowerSyncCollectionConfig,
+  ConfigWithArbitraryCollectionTypes,
+  ConfigWithSQLiteInputType,
+  ConfigWithSQLiteTypes,
+  CustomSQLiteSerializer,
   EnhancedPowerSyncCollectionConfig,
+  InferPowerSyncOutputType,
   PowerSyncCollectionConfig,
   PowerSyncCollectionUtils,
 } from "./definitions"
-import type { ExtractedTable } from "./helpers"
-import type { PendingOperation } from "./PendingOperationStore"
+import type { SyncConfig } from "@tanstack/db"
+import type { StandardSchemaV1 } from "@standard-schema/spec"
+import type { Table, TriggerDiffRecord } from "@powersync/common"
 
 /**
  * Creates PowerSync collection options for use with a standard Collection.
@@ -28,8 +37,11 @@ import type { PendingOperation } from "./PendingOperationStore"
  * @returns Collection options with utilities
  */
 
+// Overload 1: No schema is provided
+
 /**
  * Creates a PowerSync collection configuration with basic default validation.
+ * Input and Output types are the SQLite column types.
  *
  * @example
  * ```typescript
@@ -57,14 +69,25 @@ import type { PendingOperation } from "./PendingOperationStore"
  * ```
  */
 export function powerSyncCollectionOptions<TTable extends Table = Table>(
-  config: PowerSyncCollectionConfig<TTable, never>
-): CollectionConfig<ExtractedTable<TTable>, string, never> & {
-  utils: PowerSyncCollectionUtils
-}
+  config: BasePowerSyncCollectionConfig<TTable, never> & ConfigWithSQLiteTypes
+): EnhancedPowerSyncCollectionConfig<
+  TTable,
+  OptionalExtractedTable<TTable>,
+  never
+>
 
-// Overload for when schema is provided
+// Overload 2: Schema is provided and the TInput matches SQLite types.
+
 /**
  * Creates a PowerSync collection configuration with schema validation.
+ *
+ * The input types satisfy the SQLite column types.
+ *
+ * The output types are defined by the provided schema. This schema can enforce additional
+ * validation or type transforms.
+ * Arbitrary output typed mutations are encoded to SQLite for persistence. We provide a basic standard
+ * serialization implementation to serialize column values. Custom or advanced types require providing additional
+ * serializer specifications. Partial column overrides can be supplied to `serializer`.
  *
  * @example
  * ```typescript
@@ -74,6 +97,8 @@ export function powerSyncCollectionOptions<TTable extends Table = Table>(
  * const APP_SCHEMA = new Schema({
  *   documents: new Table({
  *     name: column.text,
+ *     // Dates are stored as ISO date strings in SQLite
+ *     created_at: column.text
  *   }),
  * })
  *
@@ -81,37 +106,120 @@ export function powerSyncCollectionOptions<TTable extends Table = Table>(
  * // is constrained to the SQLite schema of APP_SCHEMA
  * const schema = z.object({
  *   id: z.string(),
+ *   // Notice that `name` is not nullable (is required) here and it has additional validation
  *   name: z.string().min(3, { message: "Should be at least 3 characters" }).nullable(),
+ *   // The input type is still the SQLite string type. While collections will output smart Date instances.
+ *   created_at: z.string().transform(val => new Date(val))
  * })
  *
  * const collection = createCollection(
  *   powerSyncCollectionOptions({
  *     database: db,
  *     table: APP_SCHEMA.props.documents,
- *     schema
+ *     schema,
+ *     serializer: {
+ *        // The default is toISOString, this is just to demonstrate custom overrides
+ *        created_at: (outputValue) => outputValue.toISOString(),
+ *     },
  *   })
  * )
  * ```
  */
 export function powerSyncCollectionOptions<
   TTable extends Table,
-  TSchema extends StandardSchemaV1<any, ExtractedTable<TTable>>,
+  TSchema extends StandardSchemaV1<
+    // TInput is the SQLite types. We can use the supplied schema to validate sync input
+    OptionalExtractedTable<TTable>,
+    AnyTableColumnType<TTable>
+  >,
 >(
-  config: PowerSyncCollectionConfig<TTable, TSchema>
-): CollectionConfig<InferSchemaOutput<TSchema>, string, TSchema> & {
-  utils: PowerSyncCollectionUtils
+  config: BasePowerSyncCollectionConfig<TTable, TSchema> &
+    ConfigWithSQLiteInputType<TTable, TSchema>
+): EnhancedPowerSyncCollectionConfig<
+  TTable,
+  InferPowerSyncOutputType<TTable, TSchema>,
+  TSchema
+> & {
+  schema: TSchema
+}
+
+// Overload 3: Schema is provided with arbitrary TInput and TOutput
+/**
+ * Creates a PowerSync collection configuration with schema validation.
+ *
+ * The input types are not linked to the internal SQLite table types. This can
+ * give greater flexibility, e.g. by accepting rich types as input for `insert` or `update` operations.
+ * An additional `deserializationSchema` is required in order to process incoming SQLite updates to the output type.
+ *
+ * The output types are defined by the provided schema. This schema can enforce additional
+ * validation or type transforms.
+ * Arbitrary output typed mutations are encoded to SQLite for persistence. We provide a basic standard
+ * serialization implementation to serialize column values. Custom or advanced types require providing additional
+ * serializer specifications. Partial column overrides can be supplied to `serializer`.
+ *
+ * @example
+ * ```typescript
+ * import { z } from "zod"
+ *
+ * // The PowerSync SQLite schema
+ * const APP_SCHEMA = new Schema({
+ *   documents: new Table({
+ *     name: column.text,
+ *     // Booleans are represented as integers in SQLite
+ *     is_active: column.integer
+ *   }),
+ * })
+ *
+ * // Advanced Zod validations.
+ * // We accept boolean values as input for operations and expose Booleans in query results
+ * const schema = z.object({
+ *   id: z.string(),
+ *   isActive: z.boolean(), // TInput and TOutput are boolean
+ * })
+ *
+ * // The deserializationSchema converts the SQLite synced INTEGER (0/1) values to booleans.
+ * const deserializationSchema = z.object({
+ *   id: z.string(),
+ *   isActive: z.number().nullable().transform((val) => val == null ? true : val > 0),
+ * })
+ *
+ * const collection = createCollection(
+ *   powerSyncCollectionOptions({
+ *     database: db,
+ *     table: APP_SCHEMA.props.documents,
+ *     schema,
+ *     deserializationSchema,
+ *   })
+ * )
+ * ```
+ */
+export function powerSyncCollectionOptions<
+  TTable extends Table,
+  TSchema extends StandardSchemaV1<
+    // The input and output must have the same keys, the value types can be arbitrary
+    AnyTableColumnType<TTable>,
+    AnyTableColumnType<TTable>
+  >,
+>(
+  config: BasePowerSyncCollectionConfig<TTable, TSchema> &
+    ConfigWithArbitraryCollectionTypes<TTable, TSchema>
+): EnhancedPowerSyncCollectionConfig<
+  TTable,
+  InferPowerSyncOutputType<TTable, TSchema>,
+  TSchema
+> & {
+  utils: PowerSyncCollectionUtils<TTable>
   schema: TSchema
 }
 
 /**
  * Implementation of powerSyncCollectionOptions that handles both schema and non-schema configurations.
  */
+
 export function powerSyncCollectionOptions<
-  TTable extends Table = Table,
-  TSchema extends StandardSchemaV1 = never,
->(
-  config: PowerSyncCollectionConfig<TTable, TSchema>
-): EnhancedPowerSyncCollectionConfig<TTable, TSchema> {
+  TTable extends Table,
+  TSchema extends StandardSchemaV1<any> = never,
+>(config: PowerSyncCollectionConfig<TTable, TSchema>) {
   const {
     database,
     table,
@@ -120,8 +228,44 @@ export function powerSyncCollectionOptions<
     ...restConfig
   } = config
 
-  type RecordType = ExtractedTable<TTable>
+  const deserializationSchema =
+    `deserializationSchema` in config ? config.deserializationSchema : null
+  const serializer = `serializer` in config ? config.serializer : undefined
+  const onDeserializationError =
+    `onDeserializationError` in config
+      ? config.onDeserializationError
+      : undefined
+
+  // The SQLite table type
+  type TableType = ExtractedTable<TTable>
+
+  // The collection output type
+  type OutputType = InferPowerSyncOutputType<TTable, TSchema>
+
   const { viewName } = table
+
+  /**
+   * Deserializes data from the incoming sync stream
+   */
+  const deserializeSyncRow = (value: TableType): OutputType => {
+    if (deserializationSchema) {
+      const validation = deserializationSchema[`~standard`].validate(value)
+      if (`value` in validation) {
+        return validation.value
+      } else if (`issues` in validation) {
+        const issueMessage = `Failed to validate incoming data for ${viewName}. Issues: ${validation.issues.map((issue) => `${issue.path} - ${issue.message}`)}`
+        database.logger.error(issueMessage)
+        onDeserializationError!(validation)
+        throw new Error(issueMessage)
+      } else {
+        const unknownErrorMessage = `Unknown deserialization error for ${viewName}`
+        database.logger.error(unknownErrorMessage)
+        onDeserializationError!({ issues: [{ message: unknownErrorMessage }] })
+        throw new Error(unknownErrorMessage)
+      }
+    }
+    return value as OutputType
+  }
 
   // We can do basic runtime validations for columns if not explicit schema has been provided
   const schema = inputSchema ?? (convertTableToSchema(table) as TSchema)
@@ -143,7 +287,7 @@ export function powerSyncCollectionOptions<
     .toString(16)
     .padStart(8, `0`)}`
 
-  const transactor = new PowerSyncTransactor<RecordType>({
+  const transactor = new PowerSyncTransactor({
     database,
   })
 
@@ -152,7 +296,7 @@ export function powerSyncCollectionOptions<
    * Notice that this describes the Sync between the local SQLite table
    * and the in-memory tanstack-db collection.
    */
-  const sync: SyncConfig<RecordType, string> = {
+  const sync: SyncConfig<OutputType, string> = {
     sync: (params) => {
       const { begin, write, commit, markReady } = params
       const abortController = new AbortController()
@@ -175,14 +319,17 @@ export function powerSyncCollectionOptions<
 
                   for (const op of operations) {
                     const { id, operation, timestamp, value } = op
-                    const parsedValue = {
+                    const parsedValue = deserializeSyncRow({
                       id,
                       ...JSON.parse(value),
-                    }
+                    })
                     const parsedPreviousValue =
                       op.operation == DiffTriggerOperation.UPDATE
-                        ? { id, ...JSON.parse(op.previous_value) }
-                        : null
+                        ? deserializeSyncRow({
+                            id,
+                            ...JSON.parse(op.previous_value),
+                          })
+                        : undefined
                     write({
                       type: mapOperation(operation),
                       value: parsedValue,
@@ -231,7 +378,7 @@ export function powerSyncCollectionOptions<
               let cursor = 0
               while (currentBatchCount == syncBatchSize) {
                 begin()
-                const batchItems = await context.getAll<RecordType>(
+                const batchItems = await context.getAll<TableType>(
                   sanitizeSQL`SELECT * FROM ${viewName} LIMIT ? OFFSET ?`,
                   [syncBatchSize, cursor]
                 )
@@ -240,7 +387,7 @@ export function powerSyncCollectionOptions<
                 for (const row of batchItems) {
                   write({
                     type: `insert`,
-                    value: row,
+                    value: deserializeSyncRow(row),
                   })
                 }
                 commit()
@@ -285,9 +432,13 @@ export function powerSyncCollectionOptions<
     getSyncMetadata: undefined,
   }
 
-  const getKey = (record: RecordType) => asPowerSyncRecord(record).id
+  const getKey = (record: OutputType) => asPowerSyncRecord(record).id
 
-  const outputConfig: EnhancedPowerSyncCollectionConfig<TTable, TSchema> = {
+  const outputConfig: EnhancedPowerSyncCollectionConfig<
+    TTable,
+    OutputType,
+    TSchema
+  > = {
     ...restConfig,
     schema,
     getKey,
@@ -310,6 +461,19 @@ export function powerSyncCollectionOptions<
       getMeta: () => ({
         tableName: viewName,
         trackedTableName,
+        serializeValue: (value) =>
+          serializeForSQLite(
+            value,
+            // This is required by the input generic
+            table as Table<
+              MapBaseColumnType<InferPowerSyncOutputType<TTable, TSchema>>
+            >,
+            // Coerce serializer to the shape that corresponds to the Table constructed from OutputType
+            serializer as CustomSQLiteSerializer<
+              OutputType,
+              ExtractedTableColumns<Table<MapBaseColumnType<OutputType>>>
+            >
+          ),
       }),
     },
   }

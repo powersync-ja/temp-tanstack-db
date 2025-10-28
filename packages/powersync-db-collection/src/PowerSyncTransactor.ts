@@ -48,7 +48,7 @@ export type TransactorOptions = {
  * @param transaction - The transaction containing mutations to apply
  * @returns A promise that resolves when the mutations have been persisted to PowerSync
  */
-export class PowerSyncTransactor<T extends object = Record<string, unknown>> {
+export class PowerSyncTransactor {
   database: AbstractPowerSyncDatabase
   pendingOperationStore: PendingOperationStore
 
@@ -60,7 +60,7 @@ export class PowerSyncTransactor<T extends object = Record<string, unknown>> {
   /**
    * Persists a {@link Transaction} to the PowerSync SQLite database.
    */
-  async applyTransaction(transaction: Transaction<T>) {
+  async applyTransaction(transaction: Transaction<any>) {
     const { mutations } = transaction
 
     if (mutations.length == 0) {
@@ -147,7 +147,7 @@ export class PowerSyncTransactor<T extends object = Record<string, unknown>> {
   }
 
   protected async handleInsert(
-    mutation: PendingMutation<T>,
+    mutation: PendingMutation<any>,
     context: LockContext,
     waitForCompletion: boolean = false
   ): Promise<PendingOperation | null> {
@@ -157,10 +157,9 @@ export class PowerSyncTransactor<T extends object = Record<string, unknown>> {
       mutation,
       context,
       waitForCompletion,
-      async (tableName, mutation) => {
-        const keys = Object.keys(mutation.modified).map(
-          (key) => sanitizeSQL`${key}`
-        )
+      async (tableName, mutation, serializeValue) => {
+        const values = serializeValue(mutation.modified)
+        const keys = Object.keys(values).map((key) => sanitizeSQL`${key}`)
 
         await context.execute(
           `
@@ -169,14 +168,14 @@ export class PowerSyncTransactor<T extends object = Record<string, unknown>> {
         VALUES 
             (${keys.map((_) => `?`).join(`, `)})
         `,
-          Object.values(mutation.modified)
+          Object.values(values)
         )
       }
     )
   }
 
   protected async handleUpdate(
-    mutation: PendingMutation<T>,
+    mutation: PendingMutation<any>,
     context: LockContext,
     waitForCompletion: boolean = false
   ): Promise<PendingOperation | null> {
@@ -186,27 +185,24 @@ export class PowerSyncTransactor<T extends object = Record<string, unknown>> {
       mutation,
       context,
       waitForCompletion,
-      async (tableName, mutation) => {
-        const keys = Object.keys(mutation.modified).map(
-          (key) => sanitizeSQL`${key}`
-        )
+      async (tableName, mutation, serializeValue) => {
+        const values = serializeValue(mutation.modified)
+        const keys = Object.keys(values).map((key) => sanitizeSQL`${key}`)
+
         await context.execute(
           `
         UPDATE ${tableName} 
         SET ${keys.map((key) => `${key} = ?`).join(`, `)}
         WHERE id = ?
         `,
-          [
-            ...Object.values(mutation.modified),
-            asPowerSyncRecord(mutation.modified).id,
-          ]
+          [...Object.values(values), asPowerSyncRecord(mutation.modified).id]
         )
       }
     )
   }
 
   protected async handleDelete(
-    mutation: PendingMutation<T>,
+    mutation: PendingMutation<any>,
     context: LockContext,
     waitForCompletion: boolean = false
   ): Promise<PendingOperation | null> {
@@ -234,10 +230,14 @@ export class PowerSyncTransactor<T extends object = Record<string, unknown>> {
    * - Returning the last pending diff operation if required
    */
   protected async handleOperationWithCompletion(
-    mutation: PendingMutation<T>,
+    mutation: PendingMutation<any>,
     context: LockContext,
     waitForCompletion: boolean,
-    handler: (tableName: string, mutation: PendingMutation<T>) => Promise<void>
+    handler: (
+      tableName: string,
+      mutation: PendingMutation<any>,
+      serializeValue: (value: any) => Record<string, unknown>
+    ) => Promise<void>
   ): Promise<PendingOperation | null> {
     if (
       typeof (mutation.collection.config as any).utils?.getMeta != `function`
@@ -246,11 +246,12 @@ export class PowerSyncTransactor<T extends object = Record<string, unknown>> {
         The provided mutation might not have originated from PowerSync.`)
     }
 
-    const { tableName, trackedTableName } = (
-      mutation.collection.config as unknown as EnhancedPowerSyncCollectionConfig
+    const { tableName, trackedTableName, serializeValue } = (
+      mutation.collection
+        .config as unknown as EnhancedPowerSyncCollectionConfig<any>
     ).utils.getMeta()
 
-    await handler(sanitizeSQL`${tableName}`, mutation)
+    await handler(sanitizeSQL`${tableName}`, mutation, serializeValue)
 
     if (!waitForCompletion) {
       return null

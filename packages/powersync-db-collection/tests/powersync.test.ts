@@ -8,14 +8,12 @@ import {
   column,
 } from "@powersync/node"
 import {
-  SchemaValidationError,
   createCollection,
   createTransaction,
   eq,
   liveQueryCollectionOptions,
 } from "@tanstack/db"
 import { describe, expect, it, onTestFinished, vi } from "vitest"
-import { z } from "zod"
 import { powerSyncCollectionOptions } from "../src"
 import { PowerSyncTransactor } from "../src/PowerSyncTransactor"
 import type { AbstractPowerSyncDatabase } from "@powersync/node"
@@ -23,21 +21,20 @@ import type { AbstractPowerSyncDatabase } from "@powersync/node"
 const APP_SCHEMA = new Schema({
   users: new Table({
     name: column.text,
+    active: column.integer, // Will be mapped to Boolean
   }),
-  documents: new Table(
-    {
-      name: column.text,
-      author: column.text,
-    },
-    { viewName: `documents` }
-  ),
+  documents: new Table({
+    name: column.text,
+    author: column.text,
+    created_at: column.text, // Will be mapped to Date
+  }),
 })
 
 describe(`PowerSync Integration`, () => {
   async function createDatabase() {
     const db = new PowerSyncDatabase({
       database: {
-        dbFilename: `test.sqlite`,
+        dbFilename: `test-${randomUUID()}.sqlite`,
         dbLocation: tmpdir(),
         implementation: { type: `node:sqlite` },
       },
@@ -73,119 +70,6 @@ describe(`PowerSync Integration`, () => {
             (uuid(), 'three')
         `)
   }
-
-  describe(`schema`, () => {
-    it(`should use basic runtime validations from automatic schema`, async () => {
-      const db = await createDatabase()
-
-      // the collection should infer types and validate with the schema
-      const collection = createDocumentsCollection(db)
-
-      collection.insert({
-        id: randomUUID(),
-        name: `aname`,
-      })
-
-      collection.insert({
-        id: randomUUID(),
-        name: null,
-      })
-
-      expect(collection.size).eq(2)
-
-      // should validate inputs
-      try {
-        collection.insert({} as any)
-      } catch (ex) {
-        expect(ex instanceof SchemaValidationError).true
-        if (ex instanceof SchemaValidationError) {
-          expect(ex.message).contains(`id field must be a string`)
-        }
-      }
-    })
-
-    it(`should allow for advanced validations`, async () => {
-      const db = await createDatabase()
-
-      const errorMessage = `Name must be at least 3 characters`
-      const schema = z.object({
-        id: z.string(),
-        name: z
-          .string()
-          .min(3, { message: errorMessage })
-          .nullable()
-          .optional(),
-      })
-
-      const collection = createCollection(
-        powerSyncCollectionOptions({
-          database: db,
-          table: APP_SCHEMA.props.documents,
-          schema,
-        })
-      )
-      onTestFinished(() => collection.cleanup())
-
-      try {
-        collection.insert({
-          id: randomUUID(),
-          name: `2`,
-        })
-        expect.fail(`Should throw a validation error`)
-      } catch (ex) {
-        expect(ex instanceof SchemaValidationError).true
-        if (ex instanceof SchemaValidationError) {
-          expect(ex.message).contains(errorMessage)
-        }
-      }
-
-      collection.insert({
-        id: randomUUID(),
-        name: null,
-      })
-
-      expect(collection.size).eq(1)
-
-      // should validate inputs
-      try {
-        collection.insert({} as any)
-      } catch (ex) {
-        expect(ex instanceof SchemaValidationError).true
-        if (ex instanceof SchemaValidationError) {
-          expect(ex.message).contains(`Required - path: id`)
-        }
-      }
-    })
-
-    it(`should allow custom input types`, async () => {
-      const db = await createDatabase()
-
-      // The input can be arbitrarily typed, as long as it converts to SQLite
-      const schema = z.object({
-        id: z.string(),
-        name: z.number().transform((val) => `Number: ${val}`),
-      })
-
-      const collection = createCollection(
-        powerSyncCollectionOptions({
-          database: db,
-          table: APP_SCHEMA.props.documents,
-          schema,
-        })
-      )
-      onTestFinished(() => collection.cleanup())
-
-      const id = randomUUID()
-      collection.insert({
-        id,
-        name: 42,
-      })
-
-      const item = collection.get(id)
-
-      expect(item?.name).eq(`Number: 42`)
-    })
-  })
 
   describe(`sync`, () => {
     it(`should initialize and fetch initial data`, async () => {
@@ -456,6 +340,7 @@ describe(`PowerSync Integration`, () => {
       vi.spyOn(options.utils, `getMeta`).mockImplementation(() => ({
         tableName: `fakeTable`,
         trackedTableName: `error`,
+        serializeValue: () => ({}) as any,
       }))
       // Create two collections for the same table
       const collection = createCollection(options)

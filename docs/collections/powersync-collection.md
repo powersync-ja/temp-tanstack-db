@@ -38,9 +38,9 @@ import { Schema, Table, column } from "@powersync/web"
 const APP_SCHEMA = new Schema({
   documents: new Table({
     name: column.text,
-    content: column.text,
+    author: column.text,
     created_at: column.text,
-    updated_at: column.text,
+    archived: column.integer,
   }),
 })
 
@@ -81,11 +81,13 @@ db.connect(new Connector())
 
 ### 4. Create a TanStack DB Collection
 
-There are two ways to create a collection: using type inference or using schema validation.
+There are two main ways to create a collection: using type inference or using schema validation. Type inference will infer collection types from the underlying PowerSync SQLite tables. Schema validation can be used for additional input/output validations and type transforms.
 
 #### Option 1: Using Table Type Inference
 
 The collection types are automatically inferred from the PowerSync schema table definition. The table is used to construct a default standard schema validator which is used internally to validate collection operations.
+
+Collection mutations accept SQLite types and queries report data with SQLite types.
 
 ```ts
 import { createCollection } from "@tanstack/react-db"
@@ -99,19 +101,35 @@ const documentsCollection = createCollection(
 )
 ```
 
-#### Option 2: Using Advanced Schema Validation
+#### Option 2: SQLite Types with Schema Validation
 
-Additional validations can be performed by supplying a compatible validation schema (such as a Zod schema). The output typing of the validator is constrained to match the typing of the SQLite table. The input typing can be arbitrary.
+The standard PowerSync SQLite types map to these TypeScript types:
+
+| PowerSync Column Type | TypeScript Type  | Description                                                          |
+| --------------------- | ---------------- | -------------------------------------------------------------------- |
+| `column.text`         | `string \| null` | Text values, commonly used for strings, JSON, dates (as ISO strings) |
+| `column.integer`      | `number \| null` | Integer values, also used for booleans (0/1)                         |
+| `column.real`         | `number \| null` | Floating point numbers                                               |
+
+Note: All PowerSync column types are nullable by default, as SQLite allows null values in any column. Your schema should always handle null values appropriately by using `.nullable()` in your Zod schemas and handling null cases in your transformations.
+
+Additional validations for collection mutations can be performed with a custom schema. The Schema below asserts that
+the `name`, `author` and `created_at` fields are required as input. `name` also has an additional string length check.
+
+Note: The input and output types specified in this example still satisfy the underlying SQLite types. An additional `deserializationSchema` is required if the typing differs. See the examples below for more details.
 
 ```ts
 import { createCollection } from "@tanstack/react-db"
 import { powerSyncCollectionOptions } from "@tanstack/powersync-db-collection"
 import { z } from "zod"
 
-// The output of this schema must match the SQLite schema
+// Schema validates SQLite types but adds constraints
 const schema = z.object({
   id: z.string(),
   name: z.string().min(3, { message: "Should be at least 3 characters" }),
+  author: z.string(),
+  created_at: z.string(), // SQLite TEXT for dates
+  archived: z.number(),
 })
 
 const documentsCollection = createCollection(
@@ -119,6 +137,112 @@ const documentsCollection = createCollection(
     database: db,
     table: APP_SCHEMA.props.documents,
     schema,
+  })
+)
+
+/** Note: The types for input and output are defined as this */
+// Used for mutations like `insert` or `update`
+type DocumentCollectionInput = {
+  id: string
+  name: string
+  author: string
+  created_at: string // SQLite TEXT
+  archived: number // SQLite integer
+}
+// The type of query/data results
+type DocumentCollectionOutput = DocumentCollectionInput
+```
+
+#### Option 3: Transform SQLite Input Types to Rich Output Types
+
+You can transform SQLite types to richer types (like Date objects) while keeping SQLite-compatible input types:
+
+Note: The Transformed types are provided by TanStackDB to the PowerSync SQLite persister. These types need to be serialized in
+order to be persisted to SQLite. Most types are converted by default. For custom types, override the serialization by providing a
+`serializer` param.
+
+```ts
+const schema = z.object({
+  id: z.string(),
+  name: z.string().nullable(),
+  created_at: z
+    .string()
+    .nullable()
+    .transform((val) => (val ? new Date(val) : null)), // Transform SQLite TEXT to Date
+  archived: z
+    .number()
+    .nullable()
+    .transform((val) => (val != null ? val > 0 : null)), // Transform SQLite INTEGER to boolean
+})
+
+const documentsCollection = createCollection(
+  powerSyncCollectionOptions({
+    database: db,
+    table: APP_SCHEMA.props.documents,
+    schema,
+    // Optional: custom column serialization
+    serializer: {
+      // Dates are serialized by default, this is just an example
+      created_at: (value) => (value ? value.toISOString() : null),
+    },
+  })
+)
+
+/** Note: The types for input and output are defined as this */
+// Used for mutations like `insert` or `update`
+type DocumentCollectionInput = {
+  id: string
+  name: string | null
+  author: string | null
+  created_at: string | null // SQLite TEXT
+  archived: number | null
+}
+// The type of query/data results
+type DocumentCollectionOutput = {
+  id: string
+  name: string | null
+  author: string | null
+  created_at: Date | null // JS Date instance
+  archived: boolean | null // JS boolean
+}
+```
+
+#### Option 4: Custom Input/Output Types with Deserialization
+
+The input and output types can be completely decoupled from the internal SQLite types. This can be used to accept rich values for input mutations.
+We require an additional `deserializationSchema` in order to validate and transform incoming synced (SQLite) updates. This schema should convert the incoming SQLite update to the output type.
+
+The application logic (including the backend) should enforce that all incoming synced data passes validation with the `deserializationSchema`. Failing to validate data will result in inconsistency of the collection data. This is a fatal error! An `onDeserializationError` handler must be provided to react to this case.
+
+```ts
+// Our input/output types use Date and boolean
+const schema = z.object({
+  id: z.string(),
+  name: z.string(),
+  author: z.string(),
+  created_at: z.date(), // Accept Date objects as input
+})
+
+// Schema to transform from SQLite types to our output types
+const deserializationSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  author: z.string(),
+  created_at: z
+    .string()
+    .nullable()
+    .transform((val) => (val ? new Date(val) : null)), // SQLite TEXT to Date
+})
+
+const documentsCollection = createCollection(
+  powerSyncCollectionOptions({
+    database: db,
+    table: APP_SCHEMA.props.documents,
+    schema,
+    deserializationSchema,
+    onDeserializationError: (error) => {
+      // Present fatal error
+    },
   })
 )
 ```
@@ -138,6 +262,102 @@ When connected to a PowerSync backend, changes are automatically synchronized in
 - Queue management for offline changes
 - Automatic retries on connection loss
 
+### Working with Rich JavaScript Types
+
+PowerSync collections support rich JavaScript types like `Date`, `Boolean`, and custom objects while maintaining SQLite compatibility. The collection handles serialization and deserialization automatically:
+
+```typescript
+import { z } from "zod"
+import { Schema, Table, column } from "@powersync/web"
+import { createCollection } from "@tanstack/react-db"
+import { powerSyncCollectionOptions } from "@tanstack/powersync-db-collection"
+
+// Define PowerSync SQLite schema
+const APP_SCHEMA = new Schema({
+  tasks: new Table({
+    title: column.text,
+    due_date: column.text, // Stored as ISO string in SQLite
+    completed: column.integer, // Stored as 0/1 in SQLite
+    metadata: column.text, // Stored as JSON string in SQLite
+  }),
+})
+
+// Define rich types schema
+const taskSchema = z.object({
+  id: z.string(),
+  title: z.string().nullable(),
+  due_date: z
+    .string()
+    .nullable()
+    .transform((val) => (val ? new Date(val) : null)), // Convert to Date
+  completed: z
+    .number()
+    .nullable()
+    .transform((val) => (val != null ? val > 0 : null)), // Convert to boolean
+  metadata: z
+    .string()
+    .nullable()
+    .transform((val) => (val ? JSON.parse(val) : null)), // Parse JSON
+})
+
+// Create collection with rich types
+const tasksCollection = createCollection(
+  powerSyncCollectionOptions({
+    database: db,
+    table: APP_SCHEMA.props.tasks,
+    schema: taskSchema,
+  })
+)
+
+// Work with rich types in your code
+await tasksCollection.insert({
+  id: crypto.randomUUID(),
+  title: "Review PR",
+  due_date: "2025-10-30T10:00:00Z", // String input is automatically converted to Date
+  completed: 0, // Number input is automatically converted to boolean
+  metadata: JSON.stringify({ priority: "high" }),
+})
+
+// Query returns rich types
+const task = tasksCollection.get("task-1")
+console.log(task.due_date instanceof Date) // true
+console.log(typeof task.completed) // "boolean"
+console.log(task.metadata.priority) // "high"
+```
+
+### Type Safety with Rich Types
+
+The collection maintains type safety throughout:
+
+```typescript
+type TaskInput = {
+  id: string
+  title: string | null
+  due_date: string | null // Accept ISO string for mutations
+  completed: number | null // Accept 0/1 for mutations
+  metadata: string | null // Accept JSON string for mutations
+}
+
+type TaskOutput = {
+  id: string
+  title: string | null
+  due_date: Date | null // Get Date object in queries
+  completed: boolean | null // Get boolean in queries
+  metadata: {
+    priority: string
+    [key: string]: any
+  } | null
+}
+
+// TypeScript enforces correct types:
+tasksCollection.insert({
+  due_date: new Date(), // Error: Type 'Date' is not assignable to type 'string'
+})
+
+const task = tasksCollection.get("task-1")
+task.due_date.getTime() // OK - TypeScript knows this is a Date
+```
+
 ### Optimistic Updates
 
 Updates to the collection are applied optimistically to the local state first, then synchronized with PowerSync and the backend. If an error occurs during sync, the changes are automatically rolled back.
@@ -147,10 +367,23 @@ Updates to the collection are applied optimistically to the local state first, t
 The `powerSyncCollectionOptions` function accepts the following options:
 
 ```ts
-interface PowerSyncCollectionConfig<T> {
-  database: PowerSyncDatabase // PowerSync database instance
-  table: Table // PowerSync schema table definition
-  schema?: StandardSchemaV1 // Optional schema for additional validation (e.g., Zod schema)
+interface PowerSyncCollectionConfig<TTable extends Table, TSchema> {
+  // Required options
+  database: PowerSyncDatabase
+  table: Table
+
+  // Schema validation and type transformation
+  schema?: StandardSchemaV1
+  deserializationSchema?: StandardSchemaV1 // Required for custom input types
+  onDeserializationError?: (error: StandardSchemaV1.FailureResult) => void // Required for custom input types
+
+  // Optional Custom serialization
+  serializer?: {
+    [Key in keyof TOutput]?: (value: TOutput[Key]) => SQLiteCompatibleType
+  }
+
+  // Performance tuning
+  syncBatchSize?: number // Control batch size for initial sync, defaults to 1000
 }
 ```
 
