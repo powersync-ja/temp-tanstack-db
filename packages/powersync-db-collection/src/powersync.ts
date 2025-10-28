@@ -248,23 +248,21 @@ export function powerSyncCollectionOptions<
    * Deserializes data from the incoming sync stream
    */
   const deserializeSyncRow = (value: TableType): OutputType => {
-    if (deserializationSchema) {
-      const validation = deserializationSchema[`~standard`].validate(value)
-      if (`value` in validation) {
-        return validation.value
-      } else if (`issues` in validation) {
-        const issueMessage = `Failed to validate incoming data for ${viewName}. Issues: ${validation.issues.map((issue) => `${issue.path} - ${issue.message}`)}`
-        database.logger.error(issueMessage)
-        onDeserializationError!(validation)
-        throw new Error(issueMessage)
-      } else {
-        const unknownErrorMessage = `Unknown deserialization error for ${viewName}`
-        database.logger.error(unknownErrorMessage)
-        onDeserializationError!({ issues: [{ message: unknownErrorMessage }] })
-        throw new Error(unknownErrorMessage)
-      }
+    const validationSchema = deserializationSchema || schema
+    const validation = validationSchema[`~standard`].validate(value)
+    if (`value` in validation) {
+      return validation.value
+    } else if (`issues` in validation) {
+      const issueMessage = `Failed to validate incoming data for ${viewName}. Issues: ${validation.issues.map((issue) => `${issue.path} - ${issue.message}`)}`
+      database.logger.error(issueMessage)
+      onDeserializationError!(validation)
+      throw new Error(issueMessage)
+    } else {
+      const unknownErrorMessage = `Unknown deserialization error for ${viewName}`
+      database.logger.error(unknownErrorMessage)
+      onDeserializationError!({ issues: [{ message: unknownErrorMessage }] })
+      throw new Error(unknownErrorMessage)
     }
-    return value as OutputType
   }
 
   // We can do basic runtime validations for columns if not explicit schema has been provided

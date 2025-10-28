@@ -99,9 +99,19 @@ const documentsCollection = createCollection(
     table: APP_SCHEMA.props.documents,
   })
 )
-```
 
-#### Option 2: SQLite Types with Schema Validation
+/** Note: The types for input and output are defined as this */
+// Used for mutations like `insert` or `update`
+type DocumentCollectionInput = {
+  id: string
+  name: string | null
+  author: string | null
+  created_at: string | null // SQLite TEXT
+  archived: number | null // SQLite integer
+}
+// The type of query/data results
+type DocumentCollectionOutput = DocumentCollectionInput
+```
 
 The standard PowerSync SQLite types map to these TypeScript types:
 
@@ -111,12 +121,16 @@ The standard PowerSync SQLite types map to these TypeScript types:
 | `column.integer`      | `number \| null` | Integer values, also used for booleans (0/1)                         |
 | `column.real`         | `number \| null` | Floating point numbers                                               |
 
-Note: All PowerSync column types are nullable by default, as SQLite allows null values in any column. Your schema should always handle null values appropriately by using `.nullable()` in your Zod schemas and handling null cases in your transformations.
+Note: All PowerSync column types are nullable by default.
+
+#### Option 2: SQLite Types with Schema Validation
 
 Additional validations for collection mutations can be performed with a custom schema. The Schema below asserts that
 the `name`, `author` and `created_at` fields are required as input. `name` also has an additional string length check.
 
 Note: The input and output types specified in this example still satisfy the underlying SQLite types. An additional `deserializationSchema` is required if the typing differs. See the examples below for more details.
+
+The application logic (including the backend) should enforce that all incoming synced data passes validation with the `deserializationSchema`. Failing to validate data will result in inconsistency of the collection data. This is a fatal error! An `onDeserializationError` handler must be provided to react to this case.
 
 ```ts
 import { createCollection } from "@tanstack/react-db"
@@ -137,6 +151,9 @@ const documentsCollection = createCollection(
     database: db,
     table: APP_SCHEMA.props.documents,
     schema,
+    onDeserializationError: (error) => {
+      // Present fatal error
+    },
   })
 )
 
@@ -161,6 +178,10 @@ Note: The Transformed types are provided by TanStackDB to the PowerSync SQLite p
 order to be persisted to SQLite. Most types are converted by default. For custom types, override the serialization by providing a
 `serializer` param.
 
+The example below uses `nullable` columns, this is not a requirement.
+
+The application logic (including the backend) should enforce that all incoming synced data passes validation with the `deserializationSchema`. Failing to validate data will result in inconsistency of the collection data. This is a fatal error! An `onDeserializationError` handler must be provided to react to this case.
+
 ```ts
 const schema = z.object({
   id: z.string(),
@@ -180,6 +201,9 @@ const documentsCollection = createCollection(
     database: db,
     table: APP_SCHEMA.props.documents,
     schema,
+    onDeserializationError: (error) => {
+      // Present fatal error
+    },
     // Optional: custom column serialization
     serializer: {
       // Dates are serialized by default, this is just an example

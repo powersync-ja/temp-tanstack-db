@@ -2,9 +2,10 @@ import { randomUUID } from "node:crypto"
 import { tmpdir } from "node:os"
 import { PowerSyncDatabase, Schema, Table, column } from "@powersync/node"
 import { SchemaValidationError, createCollection } from "@tanstack/db"
-import { describe, expect, it, onTestFinished } from "vitest"
+import { describe, expect, it, onTestFinished, vi } from "vitest"
 import { z } from "zod"
 import { powerSyncCollectionOptions } from "../src"
+import type { StandardSchemaV1 } from "@standard-schema/spec"
 
 const APP_SCHEMA = new Schema({
   documents: new Table({
@@ -108,6 +109,7 @@ describe(`PowerSync Schema Integration`, () => {
           database: db,
           table: APP_SCHEMA.props.documents,
           schema,
+          onDeserializationError: () => {},
         })
       )
       onTestFinished(() => collection.cleanup())
@@ -167,6 +169,7 @@ describe(`PowerSync Schema Integration`, () => {
           database: db,
           table: APP_SCHEMA.props.documents,
           schema,
+          onDeserializationError: () => {},
         })
       )
       onTestFinished(() => collection.cleanup())
@@ -305,6 +308,55 @@ describe(`PowerSync Schema Integration`, () => {
       await result.isPersisted.promise
       expect(item?.name instanceof MyDataClass).true
       expect(item?.name?.options.value).eq(`document`)
+    })
+
+    /**
+     * We sync data which cannot be validated by the schema. This is a fatal error.
+     */
+    it(`should catch deserialization errors`, async () => {
+      const db = await createDatabase()
+
+      /**
+       * Here name is stored as a Buffer. We can't serialize this to SQLite automatically.
+       * We need to provide a serializer.
+       */
+      const schema = z.object({
+        id: z.string(),
+        name: z.string(),
+        archived: z.number(),
+        author: z.string(),
+        created_at: z.string(),
+      })
+
+      const onError = vi.fn((() => {}) as (
+        error: StandardSchemaV1.FailureResult
+      ) => void)
+
+      const collection = createCollection(
+        powerSyncCollectionOptions({
+          database: db,
+          table: APP_SCHEMA.props.documents,
+          schema,
+          onDeserializationError: onError,
+        })
+      )
+      onTestFinished(() => collection.cleanup())
+
+      await collection.stateWhenReady()
+
+      // The columns are not nullable in the schema
+      // Write invalid data to SQLite, this simulates a sync
+      await db.execute(`INSERT INTO documents(id) VALUES(uuid())`)
+
+      await vi.waitFor(
+        () => {
+          const issues = onError.mock.lastCall?.[0]?.issues
+          expect(issues).toBeDefined()
+          // Each column which should have been defined
+          expect(issues?.length).eq(4)
+        },
+        { timeout: 1000 }
+      )
     })
   })
 })

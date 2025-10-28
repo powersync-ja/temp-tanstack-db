@@ -85,6 +85,13 @@ export type SerializerConfig<
    * ```
    */
   serializer?: CustomSQLiteSerializer<TOutput, TSQLite>
+
+  /**
+   * Application logic should ensure that incoming synced data is always valid.
+   * Failing to deserialize and apply incoming changes results in data inconsistency - which is a fatal error.
+   * Use this callback to react to deserialization errors.
+   */
+  onDeserializationError: (error: StandardSchemaV1.FailureResult) => void
 }
 
 /**
@@ -154,13 +161,6 @@ export type ConfigWithArbitraryCollectionTypes<
     ExtractedTable<TTable>,
     StandardSchemaV1.InferOutput<TSchema>
   >
-
-  /**
-   * Application logic should ensure that incoming synced data is always valid.
-   * Failing to deserialize and apply incoming changes results in data inconsistency - which is a fatal error.
-   * Use this callback to react to deserialization errors.
-   */
-  onDeserializationError: (error: StandardSchemaV1.FailureResult) => void
 }
 export type BasePowerSyncCollectionConfig<
   TTable extends Table = Table,
