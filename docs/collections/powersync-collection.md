@@ -245,6 +245,7 @@ const schema = z.object({
   name: z.string(),
   author: z.string(),
   created_at: z.date(), // Accept Date objects as input
+  archived: z.boolean(), // Accept Booleans as input
 })
 
 // Schema to transform from SQLite types to our output types
@@ -254,8 +255,10 @@ const deserializationSchema = z.object({
   author: z.string(),
   created_at: z
     .string()
-    .nullable()
-    .transform((val) => (val ? new Date(val) : null)), // SQLite TEXT to Date
+    .transform((val) => (new Date(val))), // SQLite TEXT to Date
+  archived: z
+    .number()
+    .transform((val) => (val > 0), // SQLite INTEGER to Boolean
 })
 
 const documentsCollection = createCollection(
@@ -269,6 +272,18 @@ const documentsCollection = createCollection(
     },
   })
 )
+
+/** Note: The types for input and output are defined as this */
+// Used for mutations like `insert` or `update`
+type DocumentCollectionInput = {
+  id: string
+  name: string
+  author: string
+  created_at: Date
+  archived: boolean
+}
+// The type of query/data results
+type DocumentCollectionOutput = DocumentCollectionInput
 ```
 
 ## Features
