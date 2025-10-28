@@ -130,7 +130,7 @@ the `name`, `author` and `created_at` fields are required as input. `name` also 
 
 Note: The input and output types specified in this example still satisfy the underlying SQLite types. An additional `deserializationSchema` is required if the typing differs. See the examples below for more details.
 
-The application logic (including the backend) should enforce that all incoming synced data passes validation with the `deserializationSchema`. Failing to validate data will result in inconsistency of the collection data. This is a fatal error! An `onDeserializationError` handler must be provided to react to this case.
+The application logic (including the backend) should enforce that all incoming synced data passes validation with the `schema`. Failing to validate data will result in inconsistency of the collection data. This is a fatal error! An `onDeserializationError` handler must be provided to react to this case.
 
 ```ts
 import { createCollection } from "@tanstack/react-db"
@@ -180,7 +180,7 @@ order to be persisted to SQLite. Most types are converted by default. For custom
 
 The example below uses `nullable` columns, this is not a requirement.
 
-The application logic (including the backend) should enforce that all incoming synced data passes validation with the `deserializationSchema`. Failing to validate data will result in inconsistency of the collection data. This is a fatal error! An `onDeserializationError` handler must be provided to react to this case.
+The application logic (including the backend) should enforce that all incoming synced data passes validation with the `schema`. Failing to validate data will result in inconsistency of the collection data. This is a fatal error! An `onDeserializationError` handler must be provided to react to this case.
 
 ```ts
 const schema = z.object({
