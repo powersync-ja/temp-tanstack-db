@@ -304,7 +304,7 @@ export function powerSyncCollectionOptions<
       const abortController = new AbortController()
 
       let disposeTracking: (() => Promise<void>) | null = null
-      
+
       if (syncMode === `eager`) {
         return runEagerSync()
       } else {
@@ -483,31 +483,33 @@ export function powerSyncCollectionOptions<
             error,
           ),
         )
-  
+
         // Tracks all active WHERE expressions for on-demand sync filtering.
         // Each loadSubset call pushes its predicate; unloadSubset removes it.
         const activeWhereExpressions: Array<LoadSubsetOptions['where']> = []
         const mutex = new Mutex()
 
-        const loadSubset = async (options?: LoadSubsetOptions): Promise<void> => {
+        const loadSubset = async (
+          options?: LoadSubsetOptions,
+        ): Promise<void> => {
           if (options) {
             activeWhereExpressions.push(options.where)
           }
-  
+
           if (activeWhereExpressions.length === 0) {
             await disposeTracking?.()
             return
           }
-  
+
           const combinedWhere =
             activeWhereExpressions.length === 1
               ? activeWhereExpressions[0]
               : or(
-                  activeWhereExpressions[0]!,
-                  activeWhereExpressions[1]!,
+                  activeWhereExpressions[0],
+                  activeWhereExpressions[1],
                   ...activeWhereExpressions.slice(2),
                 )
-  
+
           const compiledNewData = compileSQLite(
             { where: combinedWhere },
             { jsonColumn: 'NEW.data' },
@@ -523,9 +525,9 @@ export function powerSyncCollectionOptions<
           const newDataWhenClause = toInlinedWhereClause(compiledNewData)
           const oldDataWhenClause = toInlinedWhereClause(compiledOldData)
           const viewWhereClause = toInlinedWhereClause(compiledView)
-  
+
           await disposeTracking?.()
-  
+
           disposeTracking = await createDiffTrigger({
             when: {
               [DiffTriggerOperation.INSERT]: newDataWhenClause,
@@ -558,7 +560,7 @@ export function powerSyncCollectionOptions<
             ...compiled.params,
           )
         }
-  
+
         const unloadSubset = async (options: LoadSubsetOptions) => {
           const idx = activeWhereExpressions.indexOf(options.where)
           if (idx !== -1) {
@@ -579,11 +581,13 @@ export function powerSyncCollectionOptions<
               activeWhereExpressions.length === 1
                 ? activeWhereExpressions[0]!
                 : or(
-                    activeWhereExpressions[0]!,
-                    activeWhereExpressions[1]!,
+                    activeWhereExpressions[0],
+                    activeWhereExpressions[1],
                     ...activeWhereExpressions.slice(2),
                   )
-            const compiledRemaining = compileSQLite({ where: combinedRemaining })
+            const compiledRemaining = compileSQLite({
+              where: combinedRemaining,
+            })
             const remainingWhereSQL = toInlinedWhereClause(compiledRemaining)
             evictionSQL = `SELECT id FROM ${viewName} WHERE (${departingWhereSQL}) AND NOT (${remainingWhereSQL})`
           }
@@ -600,9 +604,9 @@ export function powerSyncCollectionOptions<
           // Recreate the diff trigger for the remaining active WHERE expressions.
           await loadSubset()
         }
-  
+
         markReady()
-  
+
         return {
           cleanup: () => {
             database.logger.info(
