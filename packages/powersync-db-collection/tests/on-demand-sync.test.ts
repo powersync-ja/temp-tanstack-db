@@ -1165,6 +1165,60 @@ describe(`On-Demand Sync Mode`, () => {
         { timeout: 2000 },
       )
     })
+
+    it(`should evict rows from collection but preserve them in the SQLite database`, async () => {
+      const db = await createDatabase()
+      await createTestProducts(db)
+
+      const collection = createCollection(
+        powerSyncCollectionOptions({
+          database: db,
+          table: APP_SCHEMA.props.products,
+          syncMode: `on-demand`,
+        }),
+      )
+      onTestFinished(() => collection.cleanup())
+      await collection.stateWhenReady()
+
+      const electronicsQuery = createLiveQueryCollection({
+        query: (q) =>
+          q
+            .from({ product: collection })
+            .where(({ product }) => eq(product.category, `electronics`))
+            .select(({ product }) => ({
+              id: product.id,
+              name: product.name,
+              price: product.price,
+              category: product.category,
+            })),
+      })
+
+      await electronicsQuery.preload()
+
+      await vi.waitFor(
+        () => {
+          expect(electronicsQuery.size).toBe(3)
+        },
+        { timeout: 2000 },
+      )
+
+      // Clean up the live query — triggers unload/eviction
+      electronicsQuery.cleanup()
+
+      // Wait for eviction to complete
+      await vi.waitFor(
+        () => {
+          expect(collection.size).toBe(0)
+        },
+        { timeout: 2000 },
+      )
+
+      // Verify the rows still exist in the underlying SQLite database
+      const sqliteRows = await db.getAll(
+        `SELECT * FROM products WHERE category = 'electronics'`,
+      )
+      expect(sqliteRows).toHaveLength(3)
+    })
   })
 
   describe(`Edge cases`, () => {
