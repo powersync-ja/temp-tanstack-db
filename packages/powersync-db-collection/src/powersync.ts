@@ -358,6 +358,55 @@ export function powerSyncCollectionOptions<
         })
       }
 
+      async function flushDiffRecords(): Promise<void> {
+        await database
+          .writeTransaction(async (context) => {
+            begin()
+            const operations = await context.getAll<TriggerDiffRecord>(
+              `SELECT * FROM ${trackedTableName} ORDER BY timestamp ASC`,
+            )
+            const pendingOperations: Array<PendingOperation> = []
+
+            for (const op of operations) {
+              const { id, operation, timestamp, value } = op
+              const parsedValue = deserializeSyncRow({
+                id,
+                ...JSON.parse(value),
+              })
+              const parsedPreviousValue =
+                op.operation == DiffTriggerOperation.UPDATE
+                  ? deserializeSyncRow({
+                      id,
+                      ...JSON.parse(op.previous_value),
+                    })
+                  : undefined
+              write({
+                type: mapOperation(operation),
+                value: parsedValue,
+                previousValue: parsedPreviousValue,
+              })
+              pendingOperations.push({
+                id,
+                operation,
+                timestamp,
+                tableName: viewName,
+              })
+            }
+
+            // clear the current operations
+            await context.execute(`DELETE FROM ${trackedTableName}`)
+
+            commit()
+            pendingOperationStore.resolvePendingFor(pendingOperations)
+          })
+          .catch((error) => {
+            database.logger.error(
+              `An error has been detected in the sync handler`,
+              error,
+            )
+          })
+      }
+
       // The sync function needs to be synchronous.
       async function start(afterOnChangeRegistered?: () => Promise<void>) {
         database.logger.info(
@@ -366,52 +415,7 @@ export function powerSyncCollectionOptions<
         database.onChangeWithCallback(
           {
             onChange: async () => {
-              await database
-                .writeTransaction(async (context) => {
-                  begin()
-                  const operations = await context.getAll<TriggerDiffRecord>(
-                    `SELECT * FROM ${trackedTableName} ORDER BY timestamp ASC`,
-                  )
-                  const pendingOperations: Array<PendingOperation> = []
-
-                  for (const op of operations) {
-                    const { id, operation, timestamp, value } = op
-                    const parsedValue = deserializeSyncRow({
-                      id,
-                      ...JSON.parse(value),
-                    })
-                    const parsedPreviousValue =
-                      op.operation == DiffTriggerOperation.UPDATE
-                        ? deserializeSyncRow({
-                            id,
-                            ...JSON.parse(op.previous_value),
-                          })
-                        : undefined
-                    write({
-                      type: mapOperation(operation),
-                      value: parsedValue,
-                      previousValue: parsedPreviousValue,
-                    })
-                    pendingOperations.push({
-                      id,
-                      operation,
-                      timestamp,
-                      tableName: viewName,
-                    })
-                  }
-
-                  // clear the current operations
-                  await context.execute(`DELETE FROM ${trackedTableName}`)
-
-                  commit()
-                  pendingOperationStore.resolvePendingFor(pendingOperations)
-                })
-                .catch((error) => {
-                  database.logger.error(
-                    `An error has been detected in the sync handler`,
-                    error,
-                  )
-                })
+              await flushDiffRecords()
             },
           },
           {
@@ -487,7 +491,11 @@ export function powerSyncCollectionOptions<
         // Tracks all active WHERE expressions for on-demand sync filtering.
         // Each loadSubset call pushes its predicate; unloadSubset removes it.
         const activeWhereExpressions: Array<LoadSubsetOptions['where']> = []
-        const mutex = new Mutex()
+        // Mutex for loadSubset() and unloadSubset() calls invoked by subset changes.
+        const subsetMutex = new Mutex()
+
+        // Mutex for flushDiffRecords() and disposeTracking() calls
+        const operationsMutex = new Mutex()
 
         const loadSubset = async (
           options?: LoadSubsetOptions,
@@ -497,7 +505,13 @@ export function powerSyncCollectionOptions<
           }
 
           if (activeWhereExpressions.length === 0) {
-            await disposeTracking?.()
+            await operationsMutex.runExclusive(async () => {
+              await flushDiffRecords()
+            })
+
+            await operationsMutex.runExclusive(async () => {
+              await disposeTracking?.()
+            })
             return
           }
 
@@ -526,7 +540,13 @@ export function powerSyncCollectionOptions<
           const oldDataWhenClause = toInlinedWhereClause(compiledOldData)
           const viewWhereClause = toInlinedWhereClause(compiledView)
 
-          await disposeTracking?.()
+          await operationsMutex.runExclusive(async () => {
+            await flushDiffRecords()
+          })
+
+          await operationsMutex.runExclusive(async () => {
+            await disposeTracking?.()
+          })
 
           disposeTracking = await createDiffTrigger({
             when: {
@@ -615,9 +635,9 @@ export function powerSyncCollectionOptions<
             abortController.abort()
           },
           loadSubset: (options: LoadSubsetOptions) =>
-            mutex.runExclusive(() => loadSubset(options)),
+            subsetMutex.runExclusive(() => loadSubset(options)),
           unloadSubset: (options: LoadSubsetOptions) =>
-            mutex.runExclusive(() => unloadSubset(options)),
+            subsetMutex.runExclusive(() => unloadSubset(options)),
         }
       }
     },

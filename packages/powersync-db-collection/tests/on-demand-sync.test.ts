@@ -1550,4 +1550,219 @@ describe(`On-Demand Sync Mode`, () => {
       )
     })
   })
+
+  describe(`Pending mutations during filter changes`, () => {
+    it(`should resolve isPersisted when loadSubset is called during a pending mutation`, async () => {
+      const db = await createDatabase()
+      await createTestProducts(db)
+
+      const collection = createCollection(
+        powerSyncCollectionOptions({
+          database: db,
+          table: APP_SCHEMA.props.products,
+          syncMode: `on-demand`,
+        }),
+      )
+      onTestFinished(() => collection.cleanup())
+      await collection.stateWhenReady()
+
+      // LQ1: electronics category
+      const electronicsQuery = createLiveQueryCollection({
+        query: (q) =>
+          q
+            .from({ product: collection })
+            .where(({ product }) => eq(product.category, `electronics`))
+            .select(({ product }) => ({
+              id: product.id,
+              name: product.name,
+              price: product.price,
+              category: product.category,
+            })),
+      })
+      onTestFinished(() => electronicsQuery.cleanup())
+
+      await electronicsQuery.preload()
+
+      await vi.waitFor(
+        () => {
+          expect(electronicsQuery.size).toBe(3)
+        },
+        { timeout: 2000 },
+      )
+
+      // Insert a new electronics product — creates a pending mutation
+      const insertResult = collection.insert({
+        id: randomUUID(),
+        name: `New Gadget`,
+        price: 99,
+        category: `electronics`,
+      })
+
+      // Immediately create a second live query for clothing — triggers loadSubset
+      // which rebuilds the diff trigger, potentially dropping unprocessed diff records
+      const clothingQuery = createLiveQueryCollection({
+        query: (q) =>
+          q
+            .from({ product: collection })
+            .where(({ product }) => eq(product.category, `clothing`))
+            .select(({ product }) => ({
+              id: product.id,
+              name: product.name,
+              price: product.price,
+              category: product.category,
+            })),
+      })
+      onTestFinished(() => clothingQuery.cleanup())
+
+      await clothingQuery.preload()
+
+      // isPersisted.promise should resolve — if the bug is present, this hangs forever
+      await vi.waitFor(
+        async () => {
+          await insertResult.isPersisted.promise
+        },
+        { timeout: 5000 },
+      )
+    })
+
+    it(`should resolve isPersisted when unloadSubset is called during a pending mutation`, async () => {
+      const db = await createDatabase()
+      await createTestProducts(db)
+
+      const collection = createCollection(
+        powerSyncCollectionOptions({
+          database: db,
+          table: APP_SCHEMA.props.products,
+          syncMode: `on-demand`,
+        }),
+      )
+      onTestFinished(() => collection.cleanup())
+      await collection.stateWhenReady()
+
+      // LQ1: electronics category
+      const electronicsQuery = createLiveQueryCollection({
+        query: (q) =>
+          q
+            .from({ product: collection })
+            .where(({ product }) => eq(product.category, `electronics`))
+            .select(({ product }) => ({
+              id: product.id,
+              name: product.name,
+              price: product.price,
+              category: product.category,
+            })),
+      })
+      onTestFinished(() => electronicsQuery.cleanup())
+
+      await electronicsQuery.preload()
+
+      await vi.waitFor(
+        () => {
+          expect(electronicsQuery.size).toBe(3)
+        },
+        { timeout: 2000 },
+      )
+
+      // LQ2: clothing category
+      const clothingQuery = createLiveQueryCollection({
+        query: (q) =>
+          q
+            .from({ product: collection })
+            .where(({ product }) => eq(product.category, `clothing`))
+            .select(({ product }) => ({
+              id: product.id,
+              name: product.name,
+              price: product.price,
+              category: product.category,
+            })),
+      })
+
+      await clothingQuery.preload()
+
+      await vi.waitFor(
+        () => {
+          expect(clothingQuery.size).toBe(2)
+        },
+        { timeout: 2000 },
+      )
+
+      // Insert a new electronics product — creates a pending mutation
+      const insertResult = collection.insert({
+        id: randomUUID(),
+        name: `New Gadget`,
+        price: 99,
+        category: `electronics`,
+      })
+
+      // Immediately clean up the clothing query — triggers unloadSubset → loadSubset
+      // which rebuilds the diff trigger, potentially dropping unprocessed diff records
+      clothingQuery.cleanup()
+
+      // isPersisted.promise should resolve — if the bug is present, this hangs forever
+      await vi.waitFor(
+        async () => {
+          await insertResult.isPersisted.promise
+        },
+        { timeout: 5000 },
+      )
+    })
+
+    it(`should resolve isPersisted when all live queries are cleaned up during a pending mutation`, async () => {
+      const db = await createDatabase()
+      await createTestProducts(db)
+
+      const collection = createCollection(
+        powerSyncCollectionOptions({
+          database: db,
+          table: APP_SCHEMA.props.products,
+          syncMode: `on-demand`,
+        }),
+      )
+      onTestFinished(() => collection.cleanup())
+      await collection.stateWhenReady()
+
+      // Start with 1 live query (electronics)
+      const electronicsQuery = createLiveQueryCollection({
+        query: (q) =>
+          q
+            .from({ product: collection })
+            .where(({ product }) => eq(product.category, `electronics`))
+            .select(({ product }) => ({
+              id: product.id,
+              name: product.name,
+              price: product.price,
+              category: product.category,
+            })),
+      })
+
+      await electronicsQuery.preload()
+
+      await vi.waitFor(
+        () => {
+          expect(electronicsQuery.size).toBe(3)
+        },
+        { timeout: 2000 },
+      )
+
+      // Insert a new electronics product — creates a pending mutation
+      const insertResult = collection.insert({
+        id: randomUUID(),
+        name: `New Gadget`,
+        price: 99,
+        category: `electronics`,
+      })
+
+      // Immediately clean up the only live query — triggers unloadSubset → loadSubset
+      // with 0 predicates (early-return path), which must still call resolveAllPendingFor
+      electronicsQuery.cleanup()
+
+      // isPersisted.promise should resolve — if the bug is present, this hangs forever
+      await vi.waitFor(
+        async () => {
+          await insertResult.isPersisted.promise
+        },
+        { timeout: 5000 },
+      )
+    })
+  })
 })
