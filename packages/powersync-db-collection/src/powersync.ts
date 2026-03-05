@@ -1,5 +1,4 @@
 import { DiffTriggerOperation, sanitizeSQL } from '@powersync/common'
-import { Mutex } from 'async-mutex'
 import { or } from '@tanstack/db'
 import { compileSQLite } from './sqlite-compiler'
 import { PendingOperationStore } from './PendingOperationStore'
@@ -312,6 +311,7 @@ export function powerSyncCollectionOptions<
       }
 
       async function createDiffTrigger(options: {
+        manageDestinationExternally: boolean
         when: Record<DiffTriggerOperation, string>
         writeType: (rowId: string) => OperationType
         batchQuery: (
@@ -321,11 +321,18 @@ export function powerSyncCollectionOptions<
         ) => Promise<Array<TableType>>
         onReady: () => void
       }) {
-        const { when, writeType, batchQuery, onReady } = options
+        const {
+          manageDestinationExternally,
+          when,
+          writeType,
+          batchQuery,
+          onReady,
+        } = options
 
         return await database.triggers.createDiffTrigger({
           source: viewName,
           destination: trackedTableName,
+          manageDestinationExternally,
           when,
           hooks: {
             beforeCreate: async (context) => {
@@ -446,6 +453,7 @@ export function powerSyncCollectionOptions<
       function runEagerSync() {
         start(async () => {
           disposeTracking = await createDiffTrigger({
+            manageDestinationExternally: false,
             when: {
               [DiffTriggerOperation.INSERT]: `TRUE`,
               [DiffTriggerOperation.UPDATE]: `TRUE`,
@@ -491,11 +499,6 @@ export function powerSyncCollectionOptions<
         // Tracks all active WHERE expressions for on-demand sync filtering.
         // Each loadSubset call pushes its predicate; unloadSubset removes it.
         const activeWhereExpressions: Array<LoadSubsetOptions['where']> = []
-        // Mutex for loadSubset() and unloadSubset() calls invoked by subset changes.
-        const subsetMutex = new Mutex()
-
-        // Mutex for flushDiffRecords() and disposeTracking() calls
-        const operationsMutex = new Mutex()
 
         const loadSubset = async (
           options?: LoadSubsetOptions,
@@ -505,15 +508,23 @@ export function powerSyncCollectionOptions<
           }
 
           if (activeWhereExpressions.length === 0) {
-            await operationsMutex.runExclusive(async () => {
-              await flushDiffRecords()
-            })
-
-            await operationsMutex.runExclusive(async () => {
-              await disposeTracking?.()
-            })
+            await flushDiffRecords()
+            await disposeTracking?.()
             return
           }
+
+          await database.writeLock(async (context) => {
+            await context.execute(`
+              CREATE TEMP TABLE IF NOT EXISTS ${trackedTableName} (
+                operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id TEXT,
+                operation TEXT,
+                timestamp TEXT,
+                value TEXT,
+                previous_value TEXT
+              )
+            `)
+          })
 
           const combinedWhere =
             activeWhereExpressions.length === 1
@@ -540,15 +551,11 @@ export function powerSyncCollectionOptions<
           const oldDataWhenClause = toInlinedWhereClause(compiledOldData)
           const viewWhereClause = toInlinedWhereClause(compiledView)
 
-          await operationsMutex.runExclusive(async () => {
-            await flushDiffRecords()
-          })
-
-          await operationsMutex.runExclusive(async () => {
-            await disposeTracking?.()
-          })
+          await flushDiffRecords()
+          await disposeTracking?.()
 
           disposeTracking = await createDiffTrigger({
+            manageDestinationExternally: true,
             when: {
               [DiffTriggerOperation.INSERT]: newDataWhenClause,
               [DiffTriggerOperation.UPDATE]: `(${newDataWhenClause}) OR (${oldDataWhenClause})`,
@@ -634,10 +641,8 @@ export function powerSyncCollectionOptions<
             )
             abortController.abort()
           },
-          loadSubset: (options: LoadSubsetOptions) =>
-            subsetMutex.runExclusive(() => loadSubset(options)),
-          unloadSubset: (options: LoadSubsetOptions) =>
-            subsetMutex.runExclusive(() => unloadSubset(options)),
+          loadSubset: (options: LoadSubsetOptions) => loadSubset(options),
+          unloadSubset: (options: LoadSubsetOptions) => unloadSubset(options),
         }
       }
     },
