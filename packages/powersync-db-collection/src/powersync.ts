@@ -370,7 +370,7 @@ export function powerSyncCollectionOptions<
           .writeTransaction(async (context) => {
             begin()
             const operations = await context.getAll<TriggerDiffRecord>(
-              `SELECT * FROM ${trackedTableName} ORDER BY timestamp ASC`,
+              `SELECT * FROM ${trackedTableName} ORDER BY operation_id ASC`,
             )
             const pendingOperations: Array<PendingOperation> = []
 
@@ -440,8 +440,22 @@ export function powerSyncCollectionOptions<
         } else {
           abortController.signal.addEventListener(
             `abort`,
-            () => {
-              disposeTracking?.()
+            async () => {
+              await disposeTracking?.()
+
+              // In on-demand mode, we need to manually drop the destination table because we opt-out of internal management of the destination table.
+              if (syncMode === 'on-demand') {
+                try {
+                  await database.execute(
+                    `DROP TABLE IF EXISTS ${trackedTableName};`,
+                  )
+                } catch (error) {
+                  database.logger.error(
+                    `Could not drop tracked table ${trackedTableName}`,
+                    error,
+                  )
+                }
+              }
             },
             { once: true },
           )
@@ -513,17 +527,9 @@ export function powerSyncCollectionOptions<
             return
           }
 
-          await database.writeLock(async (context) => {
-            await context.execute(`
-              CREATE TEMP TABLE IF NOT EXISTS ${trackedTableName} (
-                operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                id TEXT,
-                operation TEXT,
-                timestamp TEXT,
-                value TEXT,
-                previous_value TEXT
-              )
-            `)
+          await database.triggers.createDiffDestinationTable(trackedTableName, {
+            temporary: true,
+            onlyIfNotExists: true,
           })
 
           const combinedWhere =
