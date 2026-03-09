@@ -1,11 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { PowerSyncDatabase, Schema, Table, column } from '@powersync/node'
-import {
-  createCollection,
-  createLiveQueryCollection,
-  eq,
-} from '@tanstack/db'
+import { createCollection, createLiveQueryCollection, eq } from '@tanstack/db'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { powerSyncCollectionOptions } from '../src'
 
@@ -52,42 +48,52 @@ describe(`Sync Streams`, () => {
     const db = await createDatabase()
     await createTestProducts(db)
 
-    const onLoad = vi.fn()
-    const onUnload = vi.fn()
+    const onLoadMock = vi.fn()
+    const onUnloadMock = vi.fn()
 
     const collection = createCollection(
       powerSyncCollectionOptions({
         database: db,
         table: APP_SCHEMA.props.products,
-        onLoad,
-        onUnload,
+        onLoad: async () => {
+          await onLoadMock()
+
+          return () => {
+            onUnloadMock()
+          }
+        },
       }),
     )
 
     await collection.stateWhenReady()
 
-    expect(onLoad).toHaveBeenCalledOnce()
-    expect(onUnload).not.toHaveBeenCalled()
+    expect(onLoadMock).toHaveBeenCalledOnce()
+    expect(onUnloadMock).not.toHaveBeenCalled()
 
     collection.cleanup()
 
-    expect(onUnload).toHaveBeenCalledOnce()
+    expect(onUnloadMock).toHaveBeenCalledOnce()
   })
 
   it(`on-demand mode: should call onLoadSubset/onUnloadSubset for each live query`, async () => {
     const db = await createDatabase()
     await createTestProducts(db)
 
-    const onLoadSubset = vi.fn()
-    const onUnloadSubset = vi.fn()
+    const onLoadSubsetMock = vi.fn()
+    const onUnloadSubsetMock = vi.fn()
 
     const collection = createCollection(
       powerSyncCollectionOptions({
         database: db,
         table: APP_SCHEMA.props.products,
         syncMode: `on-demand`,
-        onLoadSubset,
-        onUnloadSubset,
+        onLoadSubset: () => {
+          onLoadSubsetMock()
+
+          return () => {
+            onUnloadSubsetMock()
+          }
+        },
       }),
     )
     onTestFinished(() => collection.cleanup())
@@ -117,8 +123,8 @@ describe(`Sync Streams`, () => {
       { timeout: 2000 },
     )
 
-    expect(onLoadSubset).toHaveBeenCalledTimes(1)
-    expect(onUnloadSubset).not.toHaveBeenCalled()
+    expect(onLoadSubsetMock).toHaveBeenCalledTimes(1)
+    expect(onUnloadSubsetMock).not.toHaveBeenCalled()
 
     // LQ2: clothing
     const clothingQuery = createLiveQueryCollection({
@@ -143,15 +149,15 @@ describe(`Sync Streams`, () => {
       { timeout: 2000 },
     )
 
-    expect(onLoadSubset).toHaveBeenCalledTimes(2)
-    expect(onUnloadSubset).not.toHaveBeenCalled()
+    expect(onLoadSubsetMock).toHaveBeenCalledTimes(2)
+    expect(onUnloadSubsetMock).not.toHaveBeenCalled()
 
     // Cleanup LQ1 — should trigger first unload
     electronicsQuery.cleanup()
 
     await vi.waitFor(
       () => {
-        expect(onUnloadSubset).toHaveBeenCalledTimes(1)
+        expect(onUnloadSubsetMock).toHaveBeenCalledTimes(1)
       },
       { timeout: 2000 },
     )
@@ -161,7 +167,7 @@ describe(`Sync Streams`, () => {
 
     await vi.waitFor(
       () => {
-        expect(onUnloadSubset).toHaveBeenCalledTimes(2)
+        expect(onUnloadSubsetMock).toHaveBeenCalledTimes(2)
       },
       { timeout: 2000 },
     )

@@ -7,7 +7,12 @@ import { DEFAULT_BATCH_SIZE } from './definitions'
 import { asPowerSyncRecord, mapOperation } from './helpers'
 import { convertTableToSchema } from './schema'
 import { serializeForSQLite } from './serialization'
-import type { LoadSubsetOptions, OperationType, SyncConfig } from '@tanstack/db'
+import type {
+  CleanupFn,
+  LoadSubsetOptions,
+  OperationType,
+  SyncConfig,
+} from '@tanstack/db'
 import type {
   AnyTableColumnType,
   ExtractedTable,
@@ -465,8 +470,10 @@ export function powerSyncCollectionOptions<
       // Eager mode.
       // Registers a diff trigger for the entire table.
       function runEagerSync() {
+        let cleanup: CleanupFn | void | null = null
+
         start(async () => {
-          await restConfig.onLoad?.()
+          cleanup = await restConfig.onLoad?.()
 
           disposeTracking = await createDiffTrigger({
             manageDestinationExternally: false,
@@ -499,13 +506,15 @@ export function powerSyncCollectionOptions<
             `Sync has been stopped for ${viewName} into ${trackedTableName}`,
           )
           abortController.abort()
-          restConfig.onUnload?.()
+          cleanup?.()
         }
       }
 
       // On-demand mode.
       // Registers a diff trigger for the active WHERE expressions.
       function runOnDemandSync() {
+        let cleanup: CleanupFn | void | null = null
+
         start().catch((error) =>
           database.logger.error(
             `Could not start syncing process for ${viewName} into ${trackedTableName}`,
@@ -522,7 +531,7 @@ export function powerSyncCollectionOptions<
         ): Promise<void> => {
           if (options) {
             activeWhereExpressions.push(options.where)
-            await restConfig.onLoadSubset?.(options)
+            cleanup = await restConfig.onLoadSubset?.(options)
           }
 
           if (activeWhereExpressions.length === 0) {
@@ -599,7 +608,7 @@ export function powerSyncCollectionOptions<
         }
 
         const unloadSubset = async (options: LoadSubsetOptions) => {
-          await restConfig.onUnloadSubset?.(options)
+          cleanup?.()
 
           const idx = activeWhereExpressions.indexOf(options.where)
           if (idx !== -1) {

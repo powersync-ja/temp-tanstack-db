@@ -2,6 +2,7 @@ import type { AbstractPowerSyncDatabase, Table } from '@powersync/common'
 import type { StandardSchemaV1 } from '@standard-schema/spec'
 import type {
   BaseCollectionConfig,
+  CleanupFn,
   CollectionConfig,
   InferSchemaOutput,
   LoadSubsetOptions,
@@ -172,15 +173,11 @@ export type EagerSyncHooks = {
   /**
    * Called when the collection sync starts.
    * Use this to set up external data sources (e.g. subscribing to a sync stream).
+   *
+   * @returns A cleanup function that is called when the collection sync is cleaned up.
    */
-  onLoad?: () => void | Promise<void>
-  /**
-   * Called when the collection sync is cleaned up.
-   * Use this to tear down external data sources (e.g. unsubscribing from a sync stream).
-   */
-  onUnload?: () => void | Promise<void>
+  onLoad?: () => CleanupFn | void | Promise<CleanupFn | void>
   onLoadSubset?: never
-  onUnloadSubset?: never
 }
 
 /**
@@ -190,19 +187,17 @@ export type EagerSyncHooks = {
 export type OnDemandSyncHooks = {
   syncMode: 'on-demand'
   onLoad?: never
-  onUnload?: never
   /**
    * Called when a subset of data is requested by a live query.
    * Use this to set up external data sources for the requested subset
    * (e.g. subscribing to a sync stream with parameters derived from the query predicate).
+   *
+   * @returns A cleanup function that is called when the subset is unloaded.
    */
-  onLoadSubset?: (options: LoadSubsetOptions) => void | Promise<void>
-  /**
-   * Called when a subset of data is unloaded from the collection.
-   * Use this to tear down external data sources for the given subset
-   * (e.g. unsubscribing from a sync stream).
-   */
-  onUnloadSubset?: (options: LoadSubsetOptions) => void | Promise<void>
+
+  onLoadSubset?: (
+    options: LoadSubsetOptions,
+  ) => CleanupFn | void | Promise<CleanupFn | void>
 }
 
 export type BasePowerSyncCollectionConfig<
