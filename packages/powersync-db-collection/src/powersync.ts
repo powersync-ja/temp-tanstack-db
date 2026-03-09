@@ -466,6 +466,8 @@ export function powerSyncCollectionOptions<
       // Registers a diff trigger for the entire table.
       function runEagerSync() {
         start(async () => {
+          await restConfig.onLoad?.()
+
           disposeTracking = await createDiffTrigger({
             manageDestinationExternally: false,
             when: {
@@ -497,6 +499,7 @@ export function powerSyncCollectionOptions<
             `Sync has been stopped for ${viewName} into ${trackedTableName}`,
           )
           abortController.abort()
+          restConfig.onUnload?.()
         }
       }
 
@@ -519,6 +522,7 @@ export function powerSyncCollectionOptions<
         ): Promise<void> => {
           if (options) {
             activeWhereExpressions.push(options.where)
+            await restConfig.onLoadSubset?.(options)
           }
 
           if (activeWhereExpressions.length === 0) {
@@ -595,6 +599,8 @@ export function powerSyncCollectionOptions<
         }
 
         const unloadSubset = async (options: LoadSubsetOptions) => {
+          await restConfig.onUnloadSubset?.(options)
+
           const idx = activeWhereExpressions.indexOf(options.where)
           if (idx !== -1) {
             activeWhereExpressions.splice(idx, 1)

@@ -4,6 +4,7 @@ import type {
   BaseCollectionConfig,
   CollectionConfig,
   InferSchemaOutput,
+  LoadSubsetOptions,
 } from '@tanstack/db'
 import type {
   AnyTableColumnType,
@@ -162,12 +163,54 @@ export type ConfigWithArbitraryCollectionTypes<
     StandardSchemaV1.InferOutput<TSchema>
   >
 }
+/**
+ * Eager sync mode hooks.
+ * Called once when the collection sync starts and stops.
+ */
+export type EagerSyncHooks = {
+  syncMode?: 'eager'
+  /**
+   * Called when the collection sync starts.
+   * Use this to set up external data sources (e.g. subscribing to a sync stream).
+   */
+  onLoad?: () => void | Promise<void>
+  /**
+   * Called when the collection sync is cleaned up.
+   * Use this to tear down external data sources (e.g. unsubscribing from a sync stream).
+   */
+  onUnload?: () => void | Promise<void>
+  onLoadSubset?: never
+  onUnloadSubset?: never
+}
+
+/**
+ * On-demand sync mode hooks.
+ * Called each time a subset is loaded or unloaded in response to live query changes.
+ */
+export type OnDemandSyncHooks = {
+  syncMode: 'on-demand'
+  onLoad?: never
+  onUnload?: never
+  /**
+   * Called when a subset of data is requested by a live query.
+   * Use this to set up external data sources for the requested subset
+   * (e.g. subscribing to a sync stream with parameters derived from the query predicate).
+   */
+  onLoadSubset?: (options: LoadSubsetOptions) => void | Promise<void>
+  /**
+   * Called when a subset of data is unloaded from the collection.
+   * Use this to tear down external data sources for the given subset
+   * (e.g. unsubscribing from a sync stream).
+   */
+  onUnloadSubset?: (options: LoadSubsetOptions) => void | Promise<void>
+}
+
 export type BasePowerSyncCollectionConfig<
   TTable extends Table = Table,
   TSchema extends StandardSchemaV1 = never,
 > = Omit<
   BaseCollectionConfig<ExtractedTable<TTable>, string, TSchema>,
-  `onInsert` | `onUpdate` | `onDelete` | `getKey`
+  `onInsert` | `onUpdate` | `onDelete` | `getKey` | `syncMode`
 > & {
   /** The PowerSync schema Table definition */
   table: TTable
@@ -186,7 +229,7 @@ export type BasePowerSyncCollectionConfig<
    *   streaming of initial results, at the cost of more query calls.
    */
   syncBatchSize?: number
-}
+} & (EagerSyncHooks | OnDemandSyncHooks)
 
 /**
  * Configuration interface for PowerSync collection options.
