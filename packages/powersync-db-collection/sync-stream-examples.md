@@ -1,20 +1,30 @@
-## Calling sync streams automatically
+## Incorporating Sync Streams
 
+Ideally we would be able to map TanstackDB queries to sync streams automatically, if we can optimise the amount of data sync to
+the sqlite database from the service we have smaller set of data that needs to be considered when syncing from the sqlite database to TanstackDB collections.
+
+As a stepping stone towards that, we now expose data loading hooks for both eager and on-demand sync modes that allow a user to call sync streams when a collection is defined (eager mode) or when a collection's data boundary changes based on the live queries predicates (on-demand).
 For the these examples we assuming the follow sync stream exists:
 
 ```
+config:
+  edition: 3
+
 streams:
   lists:
     query: SELECT * FROM lists WHERE owner_id = auth.user_id()
     auto_subscribe: true
   todos:
     query: SELECT * FROM todos WHERE list_id = subscription.parameter('list') AND list_id IN (SELECT id FROM lists WHERE owner_id = auth.user_id())
-
-config:
-  edition: 2
 ```
 
 ### Example 1: Eager mode basic usage
+
+If you want an eager collection to subscribe to a sync stream when a collection loads, you can use the `onLoad` hook.
+The hook may return a cleanup function.
+
+Consider the diagram as an example.
+We start with 4 todos in the PS service, only 2 todos get synced via the sync stream to the SQLite database. Because it's eager mode, both get synced from the SQLite database to the collection. Finally the TanstackDB query only returns the single todo that matches the live query predicate.
 
 ```typescript
 const collection = createCollection(
@@ -25,7 +35,7 @@ const collection = createCollection(
     onLoad: async () => {
       console.log('onLoad')
       const subscription = await db
-        .syncStream('todos', { list: '368b41f1-72fd-4a81-92ad-190711d72435' })
+        .syncStream('todos', { list: 'list_1' })
         .subscribe({ ttl: 0 })
 
       await subscription.waitForFirstSync()
@@ -39,7 +49,28 @@ const collection = createCollection(
 )
 ```
 
+A live query that filters by completed.
+
+```typescript
+const liveQuery = createLiveQueryCollection({
+  query: (q) =>
+    q
+      .from({ todo: collection })
+      .where(({ todo }) => eq(todo.completed, 1))
+      .select(({ todo }) => ({
+        id: todo.id,
+        completed: todo.completed,
+      })),
+})
+```
+
 ### Example 2: On-demand basic usage
+
+If you want to on-demand collection to subscribe to a sync stream whenever a subset of data is loaded (when the list of live queries against the collection change), you can use the `onLoadSubset` hook.
+The hook may return a cleanup function.
+
+Consider the diagram as an example.
+We start with 4 todos in the PS service, only 2 todos get synced via the sync stream to the SQLite database. Because it's on-demand mode, only 1 todo matches gets synced from the SQLite database to the collection. Finally the TanstackDB query only returns the single todo that matches the live query predicate.
 
 ```typescript
 const collection = createCollection(
@@ -50,7 +81,7 @@ const collection = createCollection(
     onLoadSubset: async (options) => {
       console.log('onLoadSubset')
       const subscription = await db
-        .syncStream('todos', { list: '368b41f1-72fd-4a81-92ad-190711d72435' })
+        .syncStream('todos', { list: 'list_1' })
         .subscribe({ ttl: 0 })
 
       await subscription.waitForFirstSync()
@@ -64,6 +95,21 @@ const collection = createCollection(
 )
 ```
 
+A live query that filters by completed.
+
+```typescript
+const liveQuery = createLiveQueryCollection({
+  query: (q) =>
+    q
+      .from({ todo: collection })
+      .where(({ todo }) => eq(todo.completed, 1))
+      .select(({ todo }) => ({
+        id: todo.id,
+        completed: todo.completed,
+      })),
+})
+```
+
 ### Example 3: Extract a single filter value using `extractSimpleComparisons`
 
 Given a live query like:
@@ -72,8 +118,11 @@ Given a live query like:
 .where(({ todo }) => eq(todo.list_id, selectedListId))
 ```
 
-`onLoadSubset` receives options.where as an expression tree for eq(list_id, '<uuid>').
+`onLoadSubset` receives options.where as an expression tree `for eq(list_id, '<uuid>')`.
 We parse it to get the `list_id` value and pass it to `syncStream`.
+
+Consider the diagram as an example. Note it differs from example 1 and 2 as it aims to illustrate `extractSimpleComparisons`.
+We start with 4 todos in the PS service, the sync stream subscription criteria (`list_id = "list_1"`) is derived from the live query registered against the collection. Only 2 todos get synced via the sync stream to the SQLite database. Two todos get synced from the SQLite database to the collection. Finally the TanstackDB query returns both todos as they both match `eq(todo.list_id, 'list_id')`.
 
 #### Collection
 
@@ -125,11 +174,10 @@ const liveQuery = createLiveQueryCollection({
     q
       .from({ todo: collection })
       .where(
-        ({ todo }) => eq(todo.list_id, '368b41f1-72fd-4a81-92ad-190711d72435'), // or some listId variable
+        ({ todo }) => eq(todo.list_id, 'list_id'), // or some listId variable
       )
       .select(({ todo }) => ({
         id: todo.id,
-        description: todo.description,
         completed: todo.completed,
       })),
 })
@@ -148,6 +196,9 @@ todos:
 ```
 
 Note: We keep the `list` parameter name as is (consistent with most of our examples), but to correctly work with the following example we need to map it to `list_id`. You may opt to name it as `list_id` in the sync stream definition and skip the mapping process.
+
+Consider the diagram as an example.
+We start with 4 todos in the PS service, the sync stream subscription criteria (`list_id = "list_1" and completed = 1`) is derived from the live query registered against the collection. Only 1 todo gets synced via the sync stream to the SQLite database. One todos gets synced from the SQLite database to the collection. Finally the TanstackDB query returns 1 todo that matches `eq(todo.list_id, 'list_id') and eq(todo.completed, 1)`.
 
 #### Collection
 
@@ -210,14 +261,11 @@ const liveQuery = createLiveQueryCollection({
     q
       .from({ todo: collection })
       .where(({ todo }) =>
-        and(
-          eq(todo.list_id, '368b41f1-72fd-4a81-92ad-190711d72435'),
-          eq(todo.completed, 1),
-        ),
+        and(eq(todo.list_id, 'list_1'), eq(todo.completed, 1)),
       )
       .select(({ todo }) => ({
         id: todo.id,
-        description: todo.description,
+        completed: todo.completed,
       })),
 })
 ```
