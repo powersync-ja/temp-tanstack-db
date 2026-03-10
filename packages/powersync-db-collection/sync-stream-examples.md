@@ -4,7 +4,7 @@ Ideally we would be able to map TanstackDB queries to sync streams automatically
 the sqlite database from the service we have smaller set of data that needs to be considered when syncing from the sqlite database to TanstackDB collections.
 
 As a stepping stone towards that, we now expose data loading hooks for both eager and on-demand sync modes that allow a user to call sync streams when a collection is defined (eager mode) or when a collection's data boundary changes based on the live queries predicates (on-demand).
-For the these examples we assuming the follow sync stream exists:
+For the these examples we are assuming the follow sync stream exists:
 
 ```
 config:
@@ -31,7 +31,7 @@ const collection = createCollection(
   powerSyncCollectionOptions({
     database: db,
     table: AppSchema.props.todos,
-    syncMode: `eager`,
+    syncMode: 'eager',
     onLoad: async () => {
       console.log('onLoad')
       const subscription = await db
@@ -77,7 +77,7 @@ const collection = createCollection(
   powerSyncCollectionOptions({
     database: db,
     table: AppSchema.props.todos,
-    syncMode: `on-demand`,
+    syncMode: 'on-demand',
     onLoadSubset: async (options) => {
       console.log('onLoadSubset')
       const subscription = await db
