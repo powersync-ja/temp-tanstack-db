@@ -33,11 +33,10 @@ describe(`On-Demand Sync Mode`, () => {
       schema: APP_SCHEMA,
     })
     onTestFinished(async () => {
-      await db.disconnectAndClear()
-
       // Wait a moment for any pending cleanup operations to complete
       // before closing the database to prevent "operation on closed remote" errors
       await new Promise((resolve) => setTimeout(resolve, 100))
+      await db.disconnectAndClear()
       await db.close()
     })
     await db.disconnectAndClear()

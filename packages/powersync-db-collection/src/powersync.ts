@@ -307,7 +307,9 @@ export function powerSyncCollectionOptions<
       const { begin, write, collection, commit, markReady } = params
       const abortController = new AbortController()
 
-      let disposeTracking: (() => Promise<void>) | null = null
+      let disposeTracking:
+        | ((options?: { context?: LockContext }) => Promise<void>)
+        | null = null
 
       if (syncMode === `eager`) {
         return runEagerSync()
@@ -316,7 +318,7 @@ export function powerSyncCollectionOptions<
       }
 
       async function createDiffTrigger(options: {
-        manageDestinationExternally: boolean
+        setupContext?: LockContext
         when: Record<DiffTriggerOperation, string>
         writeType: (rowId: string) => OperationType
         batchQuery: (
@@ -326,18 +328,12 @@ export function powerSyncCollectionOptions<
         ) => Promise<Array<TableType>>
         onReady: () => void
       }) {
-        const {
-          manageDestinationExternally,
-          when,
-          writeType,
-          batchQuery,
-          onReady,
-        } = options
+        const { setupContext, when, writeType, batchQuery, onReady } = options
 
         return await database.triggers.createDiffTrigger({
           source: viewName,
           destination: trackedTableName,
-          manageDestinationExternally,
+          setupContext,
           when,
           hooks: {
             beforeCreate: async (context) => {
@@ -373,43 +369,7 @@ export function powerSyncCollectionOptions<
       async function flushDiffRecords(): Promise<void> {
         await database
           .writeTransaction(async (context) => {
-            begin()
-            const operations = await context.getAll<TriggerDiffRecord>(
-              `SELECT * FROM ${trackedTableName} ORDER BY operation_id ASC`,
-            )
-            const pendingOperations: Array<PendingOperation> = []
-
-            for (const op of operations) {
-              const { id, operation, timestamp, value } = op
-              const parsedValue = deserializeSyncRow({
-                id,
-                ...JSON.parse(value),
-              })
-              const parsedPreviousValue =
-                op.operation == DiffTriggerOperation.UPDATE
-                  ? deserializeSyncRow({
-                      id,
-                      ...JSON.parse(op.previous_value),
-                    })
-                  : undefined
-              write({
-                type: mapOperation(operation),
-                value: parsedValue,
-                previousValue: parsedPreviousValue,
-              })
-              pendingOperations.push({
-                id,
-                operation,
-                timestamp,
-                tableName: viewName,
-              })
-            }
-
-            // clear the current operations
-            await context.execute(`DELETE FROM ${trackedTableName}`)
-
-            commit()
-            pendingOperationStore.resolvePendingFor(pendingOperations)
+            await flushDiffRecordsWithContext(context)
           })
           .catch((error) => {
             database.logger.error(
@@ -417,6 +377,56 @@ export function powerSyncCollectionOptions<
               error,
             )
           })
+      }
+
+      // We can use this directly if we want to pair a flush with dispose+recreate diff trigger.
+      async function flushDiffRecordsWithContext(
+        context: LockContext,
+      ): Promise<void> {
+        try {
+          begin()
+          const operations = await context.getAll<TriggerDiffRecord>(
+            `SELECT * FROM ${trackedTableName} ORDER BY operation_id ASC`,
+          )
+          const pendingOperations: Array<PendingOperation> = []
+
+          for (const op of operations) {
+            const { id, operation, timestamp, value } = op
+            const parsedValue = deserializeSyncRow({
+              id,
+              ...JSON.parse(value),
+            })
+            const parsedPreviousValue =
+              op.operation == DiffTriggerOperation.UPDATE
+                ? deserializeSyncRow({
+                    id,
+                    ...JSON.parse(op.previous_value),
+                  })
+                : undefined
+            write({
+              type: mapOperation(operation),
+              value: parsedValue,
+              previousValue: parsedPreviousValue,
+            })
+            pendingOperations.push({
+              id,
+              operation,
+              timestamp,
+              tableName: viewName,
+            })
+          }
+
+          // clear the current operations
+          await context.execute(`DELETE FROM ${trackedTableName}`)
+
+          commit()
+          pendingOperationStore.resolvePendingFor(pendingOperations)
+        } catch (error) {
+          database.logger.error(
+            `An error has been detected in the sync handler`,
+            error,
+          )
+        }
       }
 
       // The sync function needs to be synchronous.
@@ -447,20 +457,6 @@ export function powerSyncCollectionOptions<
             `abort`,
             async () => {
               await disposeTracking?.()
-
-              // In on-demand mode, we need to manually drop the destination table because we opt-out of internal management of the destination table.
-              if (syncMode === 'on-demand') {
-                try {
-                  await database.execute(
-                    `DROP TABLE IF EXISTS ${trackedTableName};`,
-                  )
-                } catch (error) {
-                  database.logger.error(
-                    `Could not drop tracked table ${trackedTableName}`,
-                    error,
-                  )
-                }
-              }
             },
             { once: true },
           )
@@ -470,13 +466,12 @@ export function powerSyncCollectionOptions<
       // Eager mode.
       // Registers a diff trigger for the entire table.
       function runEagerSync() {
-        let cleanup: CleanupFn | void | null = null
+        let onUnload: CleanupFn | void | null = null
 
         start(async () => {
-          cleanup = await restConfig.onLoad?.()
+          onUnload = await restConfig.onLoad?.()
 
           disposeTracking = await createDiffTrigger({
-            manageDestinationExternally: false,
             when: {
               [DiffTriggerOperation.INSERT]: `TRUE`,
               [DiffTriggerOperation.UPDATE]: `TRUE`,
@@ -506,14 +501,14 @@ export function powerSyncCollectionOptions<
             `Sync has been stopped for ${viewName} into ${trackedTableName}`,
           )
           abortController.abort()
-          cleanup?.()
+          onUnload?.()
         }
       }
 
       // On-demand mode.
       // Registers a diff trigger for the active WHERE expressions.
       function runOnDemandSync() {
-        let cleanup: CleanupFn | void | null = null
+        let onUnloadSubset: CleanupFn | void | null = null
 
         start().catch((error) =>
           database.logger.error(
@@ -531,19 +526,16 @@ export function powerSyncCollectionOptions<
         ): Promise<void> => {
           if (options) {
             activeWhereExpressions.push(options.where)
-            cleanup = await restConfig.onLoadSubset?.(options)
+            onUnloadSubset = await restConfig.onLoadSubset?.(options)
           }
 
           if (activeWhereExpressions.length === 0) {
-            await flushDiffRecords()
-            await disposeTracking?.()
+            await database.writeLock(async (ctx) => {
+              await flushDiffRecordsWithContext(ctx)
+              await disposeTracking?.({ context: ctx })
+            })
             return
           }
-
-          await database.triggers.createDiffDestinationTable(trackedTableName, {
-            temporary: true,
-            onlyIfNotExists: true,
-          })
 
           const combinedWhere =
             activeWhereExpressions.length === 1
@@ -570,28 +562,30 @@ export function powerSyncCollectionOptions<
           const oldDataWhenClause = toInlinedWhereClause(compiledOldData)
           const viewWhereClause = toInlinedWhereClause(compiledView)
 
-          await flushDiffRecords()
-          await disposeTracking?.()
+          await database.writeLock(async (ctx) => {
+            await flushDiffRecordsWithContext(ctx)
+            await disposeTracking?.({ context: ctx })
 
-          disposeTracking = await createDiffTrigger({
-            manageDestinationExternally: true,
-            when: {
-              [DiffTriggerOperation.INSERT]: newDataWhenClause,
-              [DiffTriggerOperation.UPDATE]: `(${newDataWhenClause}) OR (${oldDataWhenClause})`,
-              [DiffTriggerOperation.DELETE]: oldDataWhenClause,
-            },
-            writeType: (rowId: string) =>
-              collection.has(rowId) ? `update` : `insert`,
-            batchQuery: (
-              lockContext: LockContext,
-              batchSize: number,
-              cursor: number,
-            ) =>
-              lockContext.getAll<TableType>(
-                `SELECT * FROM ${viewName} WHERE ${viewWhereClause} LIMIT ? OFFSET ?`,
-                [batchSize, cursor],
-              ),
-            onReady: () => {},
+            disposeTracking = await createDiffTrigger({
+              setupContext: ctx,
+              when: {
+                [DiffTriggerOperation.INSERT]: newDataWhenClause,
+                [DiffTriggerOperation.UPDATE]: `(${newDataWhenClause}) OR (${oldDataWhenClause})`,
+                [DiffTriggerOperation.DELETE]: oldDataWhenClause,
+              },
+              writeType: (rowId: string) =>
+                collection.has(rowId) ? `update` : `insert`,
+              batchQuery: (
+                lockContext: LockContext,
+                batchSize: number,
+                cursor: number,
+              ) =>
+                lockContext.getAll<TableType>(
+                  `SELECT * FROM ${viewName} WHERE ${viewWhereClause} LIMIT ? OFFSET ?`,
+                  [batchSize, cursor],
+                ),
+              onReady: () => {},
+            })
           })
         }
 
@@ -608,7 +602,7 @@ export function powerSyncCollectionOptions<
         }
 
         const unloadSubset = async (options: LoadSubsetOptions) => {
-          cleanup?.()
+          onUnloadSubset?.()
 
           const idx = activeWhereExpressions.indexOf(options.where)
           if (idx !== -1) {
