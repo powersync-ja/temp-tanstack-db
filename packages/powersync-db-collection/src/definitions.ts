@@ -1,3 +1,4 @@
+import type { CheckpointObserver } from './CheckpointObserver'
 import type { AbstractPowerSyncDatabase, Table } from '@powersync/common'
 import type { StandardSchemaV1 } from '@standard-schema/spec'
 import type {
@@ -7,6 +8,7 @@ import type {
   InferSchemaOutput,
   LoadSubsetOptions,
 } from '@tanstack/db'
+import type { DiffObserver } from './DiffObserver'
 import type {
   AnyTableColumnType,
   ExtractedTable,
@@ -289,6 +291,11 @@ export type PowerSyncCollectionMeta<TTable extends Table = Table> = {
    * Whether the PowerSync table tracks metadata.
    */
   metadataIsTracked: boolean
+
+  internal: {
+    checkpointObserver: CheckpointObserver,
+    diffObserver: DiffObserver
+  }
 }
 
 /**

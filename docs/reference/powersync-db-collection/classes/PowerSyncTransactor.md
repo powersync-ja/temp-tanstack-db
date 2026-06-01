@@ -11,7 +11,16 @@ Applies mutations to the PowerSync database. This method is called automatically
 insert, update, and delete operations. You typically don't need to call this directly unless you
 have special transaction requirements.
 
+By default, transactions resolve in [`TransactorMode.OFFLINE`](../enumerations/TransactorMode.md#offline)
+after the local SQLite write has been observed by TanStack DB. For workflows that
+need server acknowledgement, the experimental
+[`TransactorMode.ONLINE`](../enumerations/TransactorMode.md#online) mode waits
+for PowerSync to upload the mutation to the backend and sync the accepted change
+back down before resolving.
+
 ## Example
+
+Local-first transaction handling.
 
 ```typescript
 // Create a collection
@@ -37,6 +46,33 @@ addTx.mutate(() => {
 
 await addTx.commit()
 await addTx.isPersisted.promise
+```
+
+## Example
+
+Experimental: wait for backend acknowledgement before resolving the transaction.
+
+```typescript
+const onlineTransactor = new PowerSyncTransactor({
+  database: db,
+  mode: TransactorMode.ONLINE,
+  timeoutMs: 30_000,
+})
+
+const confirmedTx = createTransaction({
+  autoCommit: false,
+  mutationFn: async ({ transaction }) => {
+    await onlineTransactor.applyTransaction(transaction)
+  },
+})
+
+confirmedTx.mutate(() => {
+  collection.insert({ id: randomUUID(), name: `confirmed-write` })
+})
+
+await confirmedTx.commit()
+await confirmedTx.isPersisted.promise
+// At this point the mutation has been uploaded and synced back down.
 ```
 
 ## Param
@@ -94,6 +130,10 @@ applyTransaction(transaction): Promise<void>;
 Defined in: [PowerSyncTransactor.ts:66](https://github.com/TanStack/db/blob/main/packages/powersync-db-collection/src/PowerSyncTransactor.ts#L66)
 
 Persists a Transaction to the PowerSync SQLite database.
+
+The returned promise resolves according to the configured
+[`TransactorMode`](../enumerations/TransactorMode.md): local observation in
+offline mode, or backend upload plus sync-down observation in online mode.
 
 #### Parameters
 

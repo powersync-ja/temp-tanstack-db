@@ -1,18 +1,15 @@
 import { DiffTriggerOperation, sanitizeSQL } from '@powersync/common'
 import { or } from '@tanstack/db'
-import { compileSQLite } from './sqlite-compiler'
+import { CheckpointObserver } from './CheckpointObserver'
+import { DEFAULT_BATCH_SIZE } from './definitions'
+import { DiffObserverImpl } from './DiffObserver'
+import { asPowerSyncRecord, mapOperation } from './helpers'
 import { PendingOperationStore } from './PendingOperationStore'
 import { PowerSyncTransactor } from './PowerSyncTransactor'
-import { DEFAULT_BATCH_SIZE } from './definitions'
-import { asPowerSyncRecord, mapOperation } from './helpers'
 import { convertTableToSchema } from './schema'
 import { serializeForSQLite } from './serialization'
-import type {
-  CleanupFn,
-  LoadSubsetOptions,
-  OperationType,
-  SyncConfig,
-} from '@tanstack/db'
+import { compileSQLite } from './sqlite-compiler'
+import type { PendingOperation } from './PendingOperationStore'
 import type {
   AnyTableColumnType,
   ExtractedTable,
@@ -31,9 +28,21 @@ import type {
   PowerSyncCollectionConfig,
   PowerSyncCollectionUtils,
 } from './definitions'
-import type { PendingOperation } from './PendingOperationStore'
+import type {
+  CleanupFn,
+  LoadSubsetOptions,
+  OperationType,
+  SyncConfig,
+} from '@tanstack/db'
 import type { StandardSchemaV1 } from '@standard-schema/spec'
-import type { LockContext, Table, TriggerDiffRecord } from '@powersync/common'
+import type { AbstractPowerSyncDatabase, LockContext, Table, TriggerDiffRecord } from '@powersync/common'
+
+
+// TODO, finalization registry
+const CHECKPOINT_OBSERVER_MAP = new WeakMap<
+  AbstractPowerSyncDatabase,
+  CheckpointObserver
+>()
 
 /**
  * Creates PowerSync collection options for use with a standard Collection.
@@ -293,9 +302,25 @@ export function powerSyncCollectionOptions<
     .toString(16)
     .padStart(8, `0`)}`
 
+  const diffObserver = new DiffObserverImpl({
+    db: database,
+    diffTableName: trackedTableName
+  })
+
   const transactor = new PowerSyncTransactor({
     database,
   })
+
+  if (!CHECKPOINT_OBSERVER_MAP.has(database)) {
+    const observer = new CheckpointObserver({
+      db: database,
+    })
+    observer.init() // TODO, better lifecycles
+    CHECKPOINT_OBSERVER_MAP.set(database, observer)
+  }
+
+  const checkpointObserver = CHECKPOINT_OBSERVER_MAP.get(database)!
+
 
   /**
    * "sync"
@@ -438,6 +463,8 @@ export function powerSyncCollectionOptions<
           {
             onChange: async () => {
               await flushDiffRecords()
+              // Emit that we've processed all changes up till now.
+              diffObserver.markEmpty();
             },
           },
           {
@@ -693,6 +720,10 @@ export function powerSyncCollectionOptions<
     },
     utils: {
       getMeta: () => ({
+        internal: {
+          checkpointObserver,
+          diffObserver
+        },
         tableName: viewName,
         trackedTableName,
         metadataIsTracked,

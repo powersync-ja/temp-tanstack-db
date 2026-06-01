@@ -12,16 +12,119 @@ import type {
 
 const debug = DebugModule.debug(`ts/db:powersync`)
 
-export type TransactorOptions = {
+/**
+ * Controls when a {@link PowerSyncTransactor} considers a mutation transaction
+ * complete.
+ */
+export enum TransactorMode {
+  /**
+   * Resolve mutation transactions once the local PowerSync SQLite write has
+   * been observed by TanStack DB.
+   *
+   * This is the default mode. It gives fast local-first behavior: mutations are
+   * persisted locally, PowerSync can upload them later, and TanStack DB state is
+   * already consistent with the local database when the transaction resolves.
+   */
+  OFFLINE = 'offline',
+  /**
+   * Resolve mutation transactions only after PowerSync has uploaded the local
+   * write to the backend and the resulting change has been synced back down and
+   * observed by TanStack DB.
+   *
+   * Use this mode when callers need backend confirmation before treating a
+   * mutation as complete, such as when showing committed server state,
+   * navigating away from a critical workflow, or coordinating with systems that
+   * only react after the backend has accepted the write.
+   *
+   * Because this waits for a full upload and sync-down cycle, transactions can
+   * take longer to resolve and may remain pending while the client is offline or
+   * the PowerSync connection is unable to complete a checkpoint.
+   *
+   * @experimental This mode depends on PowerSync checkpoint internals and may
+   * change as the PowerSync SDK exposes more direct backend-acknowledgement
+   * hooks.
+   */
+  ONLINE = 'online'
+}
+
+type BaseTransactorOptions = {
+  /**
+   * The PowerSync database that mutations will be written to.
+   */
   database: AbstractPowerSyncDatabase
 }
+
+/**
+ * Options for local-first transaction handling.
+ */
+export type OfflineTransactorOptions = BaseTransactorOptions & {
+  /**
+   * Resolve after the local write has been observed by TanStack DB.
+   * This is the default when `mode` is omitted.
+   */
+  mode?: TransactorMode.OFFLINE
+}
+
+/**
+ * Options for backend-confirmed transaction handling.
+ *
+ * @experimental Online transaction completion depends on PowerSync checkpoint
+ * internals and may change as the PowerSync SDK exposes more direct
+ * backend-acknowledgement hooks.
+ */
+export type OnlineTransactorOptions = BaseTransactorOptions & {
+  /**
+   * Resolve after the local write has been uploaded to the backend, synced back
+   * down, and observed by TanStack DB.
+   *
+   * @experimental This mode depends on PowerSync checkpoint internals and may
+   * change as the PowerSync SDK exposes more direct backend-acknowledgement
+   * hooks.
+   */
+  mode: TransactorMode.ONLINE
+  /**
+   * Maximum total time to wait for the backend checkpoint and synced-down diff
+   * records.
+   *
+   * If the timeout is reached before the write has completed the upload and
+   * sync-down cycle, the mutation transaction rejects.
+   *
+   * @experimental This option only applies to the experimental online
+   * transaction mode.
+   */
+  timeoutMs?: number
+  /**
+   * Optional signal for cancelling the online wait.
+   *
+   * @experimental This option only applies to the experimental online
+   * transaction mode.
+   */
+  abortSignal?: AbortSignal
+}
+
+/**
+ * Configuration for {@link PowerSyncTransactor}.
+ *
+ * `mode` is the discriminator:
+ * - omit `mode` or use `TransactorMode.OFFLINE` for fast local-first writes
+ * - use `TransactorMode.ONLINE` to unlock backend-confirmed wait options
+ */
+export type TransactorOptions = OfflineTransactorOptions | OnlineTransactorOptions
 
 /**
  * Applies mutations to the PowerSync database. This method is called automatically by the collection's
  * insert, update, and delete operations. You typically don't need to call this directly unless you
  * have special transaction requirements.
  *
+ * By default, transactions resolve in {@link TransactorMode.OFFLINE} mode after
+ * the local SQLite write has been observed by TanStack DB. For workflows that
+ * need server acknowledgement, the experimental
+ * {@link TransactorMode.ONLINE} mode waits for PowerSync to upload the mutation
+ * to the backend and sync the accepted change back down before resolving.
+ *
  * @example
+ * Local-first transaction handling.
+ *
  * ```typescript
  * // Create a collection
  * const collection = createCollection(
@@ -48,16 +151,56 @@ export type TransactorOptions = {
  * await addTx.isPersisted.promise
  * ```
  *
+ * @example
+ * Experimental: wait for backend acknowledgement before resolving the
+ * transaction.
+ *
+ * ```typescript
+ * const onlineTransactor = new PowerSyncTransactor({
+ *   database: db,
+ *   mode: TransactorMode.ONLINE,
+ *   timeoutMs: 30_000,
+ * })
+ *
+ * const confirmedTx = createTransaction({
+ *   autoCommit: false,
+ *   mutationFn: async ({ transaction }) => {
+ *     await onlineTransactor.applyTransaction(transaction)
+ *   },
+ * })
+ *
+ * confirmedTx.mutate(() => {
+ *   collection.insert({ id: randomUUID(), name: `confirmed-write` })
+ * })
+ *
+ * await confirmedTx.commit()
+ * await confirmedTx.isPersisted.promise
+ * // At this point the mutation has been uploaded and synced back down.
+ * ```
+ *
  * @param transaction - The transaction containing mutations to apply
- * @returns A promise that resolves when the mutations have been persisted to PowerSync
+ * @returns A promise that resolves according to the configured {@link TransactorMode}.
  */
 export class PowerSyncTransactor {
   database: AbstractPowerSyncDatabase
   pendingOperationStore: PendingOperationStore
+  readonly mode: TransactorMode
+  protected readonly onlineOptions: Pick<
+    OnlineTransactorOptions,
+    'abortSignal' | 'timeoutMs'
+  > | null
 
   constructor(options: TransactorOptions) {
     this.database = options.database
     this.pendingOperationStore = PendingOperationStore.GLOBAL
+    this.mode = options.mode ?? TransactorMode.OFFLINE
+    this.onlineOptions =
+      options.mode === TransactorMode.ONLINE
+        ? {
+            abortSignal: options.abortSignal,
+            timeoutMs: options.timeoutMs,
+          }
+        : null
   }
 
   /**
@@ -129,19 +272,32 @@ export class PowerSyncTransactor {
           }
         }
 
-        /**
-         * Return a promise from the writeTransaction, without awaiting it.
-         * This promise will resolve once the entire transaction has been
-         * observed via the diff triggers.
-         * We return without awaiting in order to free the write lock.
-         */
-        return {
-          whenComplete: Promise.all(
-            pendingOperations
-              .filter((op) => !!op)
-              .map((op) => this.pendingOperationStore.waitFor(op)),
-          ),
+        if (this.mode == TransactorMode.OFFLINE) {
+          /**
+           * Return a promise from the writeTransaction, without awaiting it.
+           * This promise will resolve once the entire transaction has been
+           * observed via the diff triggers.
+           * We return without awaiting in order to free the write lock.
+           */
+          return {
+            whenComplete: Promise.all(
+              pendingOperations
+                .filter((op) => !!op)
+                .map((op) => this.pendingOperationStore.waitFor(op)),
+            ),
+          }
+        } else {
+          const meta = this.getMutationCollectionMeta(mutations[0]!);
+          /**
+           * Resolve after the backend has accepted the write checkpoint and
+           * TanStack DB has processed the resulting synced-down diff records.
+           */
+          return {
+            whenComplete: this.waitForOnlineCompletion(meta),
+          }
         }
+
+  
       },
     )
 
@@ -303,6 +459,51 @@ export class PowerSyncTransactor {
       mutation.collection
         .config as unknown as EnhancedPowerSyncCollectionConfig<any>
     ).utils.getMeta()
+  }
+
+  /**
+   * Waits for PowerSync to upload the local write, receive the accepted change
+   * back from the backend, and drain the resulting TanStack DB diff records.
+   */
+  protected async waitForOnlineCompletion(
+    meta: PowerSyncCollectionMeta<any>,
+  ): Promise<void> {
+    const { abortSignal, timeoutMs } = this.onlineOptions ?? {}
+
+    if (timeoutMs == null) {
+      const options = { abortSignal }
+      await meta.internal.checkpointObserver.waitForCheckpoint(options)
+      await this.database.writeLock((ctx) =>
+        meta.internal.diffObserver.waitForEmpty(ctx, options),
+      )
+      return
+    }
+
+    const deadlineController = new AbortController()
+    const timeout = setTimeout(() => {
+      deadlineController.abort()
+    }, timeoutMs)
+
+    const onAbort = () => {
+      deadlineController.abort()
+    }
+
+    abortSignal?.addEventListener('abort', onAbort)
+
+    try {
+      if (abortSignal?.aborted) {
+        deadlineController.abort()
+      }
+
+      const options = { abortSignal: deadlineController.signal }
+      await meta.internal.checkpointObserver.waitForCheckpoint(options)
+      await this.database.writeLock((ctx) =>
+        meta.internal.diffObserver.waitForEmpty(ctx, options),
+      )
+    } finally {
+      clearTimeout(timeout)
+      abortSignal?.removeEventListener('abort', onAbort)
+    }
   }
 
   /**
