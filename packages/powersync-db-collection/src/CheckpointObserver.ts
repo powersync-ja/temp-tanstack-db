@@ -71,6 +71,8 @@ const deserializeCheckpointRecord = (
  * Note: this uses internals which might be subject to change.
  * Note: This is a sneaky and lazy method for obtaining write checkpoint updates
  * without actually implementing the necessary logic/hooks in the PowerSync SDK.
+ * We might be able to replace this with a single watched query for ps_buckets - the logic here
+ * just helped a lot with debugging.
  */
 export class CheckpointObserver {
   readonly db: AbstractPowerSyncDatabase;
