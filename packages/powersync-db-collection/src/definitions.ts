@@ -15,6 +15,7 @@ import type {
   OptionalExtractedTable,
   PowerSyncRecord,
 } from './helpers'
+import type { TransactorModeOptions } from './PowerSyncTransactor'
 
 /**
  * Small helper which determines the output type if:
@@ -166,6 +167,16 @@ export type ConfigWithArbitraryCollectionTypes<
     StandardSchemaV1.InferOutput<TSchema>
   >
 }
+
+/**
+ * Options used by the default {@link PowerSyncTransactor} created by
+ * {@link powerSyncCollectionOptions}.
+ *
+ * The collection already provides the PowerSync database, so this only accepts
+ * the mode-specific options.
+ */
+export type DefaultPowerSyncTransactorOptions = TransactorModeOptions
+
 /**
  * Eager sync mode hooks.
  * Called once when the collection sync starts and stops.
@@ -226,6 +237,19 @@ export type BasePowerSyncCollectionConfig<
    *   streaming of initial results, at the cost of more query calls.
    */
   syncBatchSize?: number
+  /**
+   * Defaults for the built-in {@link PowerSyncTransactor} used by collection
+   * insert, update, and delete handlers.
+   *
+   * Use this to opt the collection's default mutation handlers into a
+   * particular transaction mode. For example, pass
+   * `{ mode: TransactorMode.ONLINE, timeoutMs: 30_000 }` to wait for backend
+   * upload and sync-down confirmation before collection mutations resolve.
+   *
+   * This does not affect manually created {@link PowerSyncTransactor}
+   * instances.
+   */
+  transactor?: DefaultPowerSyncTransactorOptions
 } & (EagerSyncHooks | OnDemandSyncHooks)
 
 /**

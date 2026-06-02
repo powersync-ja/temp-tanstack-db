@@ -55,9 +55,9 @@ type BaseTransactorOptions = {
 }
 
 /**
- * Options for local-first transaction handling.
+ * Local-first transactor mode options.
  */
-export type OfflineTransactorOptions = BaseTransactorOptions & {
+export type OfflineTransactorModeOptions = {
   /**
    * Resolve after the local write has been observed by TanStack DB.
    * This is the default when `mode` is omitted.
@@ -66,13 +66,13 @@ export type OfflineTransactorOptions = BaseTransactorOptions & {
 }
 
 /**
- * Options for backend-confirmed transaction handling.
+ * Backend-confirmed transactor mode options.
  *
  * @experimental Online transaction completion depends on PowerSync checkpoint
  * internals and may change as the PowerSync SDK exposes more direct
  * backend-acknowledgement hooks.
  */
-export type OnlineTransactorOptions = BaseTransactorOptions & {
+export type OnlineTransactorModeOptions = {
   /**
    * Resolve after the local write has been uploaded to the backend, synced back
    * down, and observed by TanStack DB.
@@ -101,6 +101,33 @@ export type OnlineTransactorOptions = BaseTransactorOptions & {
    */
   abortSignal?: AbortSignal
 }
+
+/**
+ * Shared transactor mode options.
+ *
+ * This lower-level discriminated union is used both by
+ * {@link PowerSyncTransactor} and by collection options that configure the
+ * default transactor.
+ */
+export type TransactorModeOptions =
+  | OfflineTransactorModeOptions
+  | OnlineTransactorModeOptions
+
+/**
+ * Options for local-first transaction handling.
+ */
+export type OfflineTransactorOptions = BaseTransactorOptions &
+  OfflineTransactorModeOptions
+
+/**
+ * Options for backend-confirmed transaction handling.
+ *
+ * @experimental Online transaction completion depends on PowerSync checkpoint
+ * internals and may change as the PowerSync SDK exposes more direct
+ * backend-acknowledgement hooks.
+ */
+export type OnlineTransactorOptions = BaseTransactorOptions &
+  OnlineTransactorModeOptions
 
 /**
  * Configuration for {@link PowerSyncTransactor}.

@@ -242,6 +242,7 @@ export function powerSyncCollectionOptions<
     schema: inputSchema,
     syncBatchSize = DEFAULT_BATCH_SIZE,
     syncMode = 'eager',
+    transactor: transactorOptions,
     ...restConfig
   } = config
 
@@ -309,6 +310,7 @@ export function powerSyncCollectionOptions<
 
   const transactor = new PowerSyncTransactor({
     database,
+    ...transactorOptions,
   })
 
   if (!CHECKPOINT_OBSERVER_MAP.has(database)) {
