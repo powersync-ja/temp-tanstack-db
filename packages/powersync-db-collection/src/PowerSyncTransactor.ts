@@ -314,6 +314,8 @@ export class PowerSyncTransactor {
             ),
           }
         } else {
+          // TODO, this should wait for all unique collections to have been flushed
+          // after the write checkpoint has been synced.
           const meta = this.getMutationCollectionMeta(mutations[0]!);
           /**
            * Resolve after the backend has accepted the write checkpoint and
@@ -500,9 +502,7 @@ export class PowerSyncTransactor {
     if (timeoutMs == null) {
       const options = { abortSignal }
       await meta.internal.checkpointObserver.waitForCheckpoint(options)
-      await this.database.writeLock((ctx) =>
-        meta.internal.diffObserver.waitForEmpty(ctx, options),
-      )
+      await meta.internal.diffObserver.waitForEmpty(options)
       return
     }
 
@@ -524,9 +524,7 @@ export class PowerSyncTransactor {
 
       const options = { abortSignal: deadlineController.signal }
       await meta.internal.checkpointObserver.waitForCheckpoint(options)
-      await this.database.writeLock((ctx) =>
-        meta.internal.diffObserver.waitForEmpty(ctx, options),
-      )
+      await meta.internal.diffObserver.waitForEmpty(options)
     } finally {
       clearTimeout(timeout)
       abortSignal?.removeEventListener('abort', onAbort)

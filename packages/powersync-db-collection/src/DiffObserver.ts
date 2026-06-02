@@ -1,9 +1,9 @@
 import { BaseObserver } from '@powersync/common';
-import type { AbstractPowerSyncDatabase, LockContext } from '@powersync/common';
+import type { AbstractPowerSyncDatabase } from '@powersync/common';
 
 // TODO cleanup exports
 export interface DiffObserver {
-    waitForEmpty: (context: LockContext, options?: {timeoutMs?: number, abortSignal?: AbortSignal}) => Promise<void>
+    waitForEmpty: (options?: {timeoutMs?: number, abortSignal?: AbortSignal}) => Promise<void>
 }
 
 type DiffObserverImplListener = {
@@ -29,24 +29,28 @@ export class DiffObserverImpl extends BaseObserver<DiffObserverImplListener> imp
         this.iterateListeners(l => l.empty?.());
     }
 
-     async waitForEmpty(context: LockContext, options: {timeoutMs?: number, abortSignal?: AbortSignal} = {}): Promise<void> {
+     async waitForEmpty(options: {timeoutMs?: number, abortSignal?: AbortSignal} = {}): Promise<void> {
         // get a write lock to check the table state
-        const {count} = await context.get<{count: number}>(`SELECT COUNT(*) as count FROM ${this.diffTableName}`)
-        if (count == 0) {
-            // It's already empty
-            return;
-        }
+        let finalPromise: Promise<void>;
+        await this.db.writeLock(async (ctx) => {
+            const {count} = await ctx.get<{count: number}>(`SELECT COUNT(*) as count FROM ${this.diffTableName}`)
+            if (count == 0) {
+                // It's already empty
+                return;
+            }
 
-        await new Promise<void>((resolve, reject) => {
+            // configure listeners inside a write lock
+            finalPromise = new Promise<void>((resolve, reject) => {
                 const {abortSignal, timeoutMs} = options;
                 let completed = false;
 
                 const timeout = timeoutMs ? setTimeout(() => {
+                    cleanup();
                     reject(new Error('Timeout while waiting for diff table to clear'));
                 }, timeoutMs) : null;
 
                 const onAbort = () => {
-                    completed = true;
+                    cleanup();
                     reject(new Error('Aborted while waiting for diff table to clear'));
                 }
 
@@ -63,8 +67,8 @@ export class DiffObserverImpl extends BaseObserver<DiffObserverImplListener> imp
                 // register a listener for when it's empty
                 const dispose = this.registerListener({
                     closed: () => {
-                        reject(new Error('Diff Observer closed'));
                         cleanup();
+                        reject(new Error('Diff Observer closed'));
                     },
                     empty: () => {
                         if (completed) {
@@ -75,6 +79,13 @@ export class DiffObserverImpl extends BaseObserver<DiffObserverImplListener> imp
                     }
                 });
 
+                if (abortSignal?.aborted) {
+                    onAbort();
+                }
             })
+        })
+
+        // await the listeners outside of the previous write lock
+        await finalPromise!;
      }
 }
