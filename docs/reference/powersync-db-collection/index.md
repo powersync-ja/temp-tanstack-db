@@ -9,6 +9,10 @@ title: "@tanstack/powersync-db-collection"
 
 - [PowerSyncTransactor](classes/PowerSyncTransactor.md)
 
+## Enumerations
+
+- [TransactorMode](enumerations/TransactorMode.md)
+
 ## Type Aliases
 
 - [BasePowerSyncCollectionConfig](type-aliases/BasePowerSyncCollectionConfig.md)
@@ -22,6 +26,12 @@ title: "@tanstack/powersync-db-collection"
 - [PowerSyncCollectionMeta](type-aliases/PowerSyncCollectionMeta.md)
 - [PowerSyncCollectionUtils](type-aliases/PowerSyncCollectionUtils.md)
 - [SerializerConfig](type-aliases/SerializerConfig.md)
+- [DefaultPowerSyncTransactorOptions](type-aliases/DefaultPowerSyncTransactorOptions.md)
+- [OfflineTransactorModeOptions](type-aliases/OfflineTransactorModeOptions.md)
+- [OfflineTransactorOptions](type-aliases/OfflineTransactorOptions.md)
+- [OnlineTransactorModeOptions](type-aliases/OnlineTransactorModeOptions.md)
+- [OnlineTransactorOptions](type-aliases/OnlineTransactorOptions.md)
+- [TransactorModeOptions](type-aliases/TransactorModeOptions.md)
 - [TransactorOptions](type-aliases/TransactorOptions.md)
 
 ## Variables

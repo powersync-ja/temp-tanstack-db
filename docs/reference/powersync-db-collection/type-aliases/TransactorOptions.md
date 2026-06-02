@@ -6,17 +6,30 @@ title: TransactorOptions
 # Type Alias: TransactorOptions
 
 ```ts
-type TransactorOptions = object;
+type TransactorOptions = OfflineTransactorOptions | OnlineTransactorOptions;
 ```
 
-Defined in: [PowerSyncTransactor.ts:15](https://github.com/TanStack/db/blob/main/packages/powersync-db-collection/src/PowerSyncTransactor.ts#L15)
+Configuration for a [`PowerSyncTransactor`](../classes/PowerSyncTransactor.md).
 
-## Properties
+`mode` is the discriminator:
 
-### database
+- omit `mode` or use [`TransactorMode.OFFLINE`](../enumerations/TransactorMode.md#offline) for fast local-first writes
+- use [`TransactorMode.ONLINE`](../enumerations/TransactorMode.md#online) to unlock backend-confirmed wait options
 
-```ts
-database: AbstractPowerSyncDatabase;
+## Example
+
+```typescript
+new PowerSyncTransactor({
+  database: db,
+})
 ```
 
-Defined in: [PowerSyncTransactor.ts:16](https://github.com/TanStack/db/blob/main/packages/powersync-db-collection/src/PowerSyncTransactor.ts#L16)
+## Example
+
+```typescript
+new PowerSyncTransactor({
+  database: db,
+  mode: TransactorMode.ONLINE,
+  timeoutMs: 30_000,
+})
+```

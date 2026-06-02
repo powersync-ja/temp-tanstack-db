@@ -39,6 +39,25 @@ in-memory TanStack DB collection.
 - Smaller values may lower memory usage and allow earlier
   streaming of initial results, at the cost of more query calls.
 
+***
+
+### transactor?
+
+```ts
+optional transactor: DefaultPowerSyncTransactorOptions;
+```
+
+Defaults for the built-in [`PowerSyncTransactor`](../classes/PowerSyncTransactor.md)
+used by collection insert, update, and delete handlers.
+
+Use this to opt the collection's default mutation handlers into a particular
+transaction mode. For example, pass
+`{ mode: TransactorMode.ONLINE, timeoutMs: 30_000 }` to wait for backend upload
+and sync-down confirmation before collection mutations resolve.
+
+This does not affect manually created [`PowerSyncTransactor`](../classes/PowerSyncTransactor.md)
+instances.
+
 ### table
 
 ```ts

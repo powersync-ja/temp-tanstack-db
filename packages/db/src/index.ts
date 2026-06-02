@@ -29,4 +29,5 @@ export * from './query/expression-helpers.js'
 // Re-export some stuff explicitly to ensure the type & value is exported
 export type { Collection } from './collection/index.js'
 export { IR }
+export { or } from './query/builder/functions.js'
 export { operators, type OperatorName } from './query/builder/functions.js'
